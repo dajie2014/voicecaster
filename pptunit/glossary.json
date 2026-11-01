@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "note": "这张表完全由你自己维护。下面是任务书里点名的四个例子，可以改、可以删。加新词：term=原文写法，lang=语言，note=给自己看的备忘。",
+  "terms": [
+    { "term": "Dorico", "lang": "en", "note": "制谱软件名" },
+    { "term": "Allegro", "lang": "it", "note": "快板" },
+    { "term": "Piano", "lang": "it", "note": "弱" },
+    { "term": "Forte", "lang": "it", "note": "强" }
+  ]
+}
