@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# 个人数据：声音参考、生成结果、工程文件，绝不入库
+characters/
+output/
+projects/
+demo/
+*.wav
+*.bak-*
