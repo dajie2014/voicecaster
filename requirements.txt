@@ -1,0 +1,20 @@
+# 只在 Apple 芯片 Mac 上这套能直接跑起来。
+# Windows：把 torch 的 MLX 分支换成 PyTorch/CUDA，并把语音后端换掉（见 README 第一节）。
+
+torch>=2.3
+numpy
+soundfile
+fastapi
+uvicorn
+pydantic
+python-pptx
+lxml
+Pillow
+librosa
+sounddevice
+gradio
+
+# 语音后端（本机 MLX 版，Windows 用不了，需另装 PyTorch 版）：
+#   voxcpm        —— 捏声 / 方言
+#   mlx-audio     —— 千问 TTS 常驻服务
+#   mlx-indextts  —— 「大户」档
