@@ -1,3 +1,5 @@
+[**English**](README.en.md) · **中文**
+
 # VoiceCaster
 
 **本地跑的中文有声内容工坊**：声库 → 朗读 → 剧本排演 → PPT 讲解。
