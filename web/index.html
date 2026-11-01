@@ -1,0 +1,3796 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>VoiceCaster</title>
+<style>
+  :root { --bg:#0b0b0f; --card:rgba(255,255,255,.055); --line:rgba(255,255,255,.11);
+          --ink:#ecedf1; --mute:#9a9aa4; --accent:#ff9a3c; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; color:var(--ink);
+         font:17px/1.75 -apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+         background:#0b0b0f url('/bg_concept.jpg') center 42%/cover fixed no-repeat; }
+  /* 概念图偏亮：先压一层线性暗罩，再压一层四周暗角，中间的舞台光还透得出来 */
+  body::before { content:''; position:fixed; inset:0; z-index:0;
+         background:linear-gradient(180deg, rgba(8,8,12,.74) 0%, rgba(8,8,12,.60) 38%, rgba(8,8,12,.88) 100%),
+                    radial-gradient(120% 85% at 50% 30%, rgba(8,8,12,.10) 0%, rgba(8,8,12,.55) 100%); }
+  .wrap { position:relative; z-index:1; max-width:940px; margin:0 auto; padding:40px 20px 70px; }
+  h1 { font-size:26px; margin:0 0 2px; letter-spacing:.5px; font-weight:600;
+       text-shadow:0 2px 24px rgba(0,0,0,.6); }
+  .sub { color:var(--mute); font-size:14px; margin-bottom:24px; letter-spacing:.4px; }
+  .tabs { display:flex; gap:26px; border-bottom:1px solid var(--line); margin-bottom:18px; }
+  .tabs b, .tabs span, .tabs .tab { padding:7px 0; cursor:pointer; font-size:15px; }
+  .tabs b, .tabs .tab.active { color:var(--accent); border-bottom:2px solid var(--accent); font-weight:600; }
+  .tabs span, .tabs .tab { color:var(--mute); }
+  textarea.big { width:100%; height:200px; padding:15px; font:16px/1.8 ui-monospace,Menlo,monospace;
+                 border:1px solid var(--line); border-radius:12px; resize:vertical; outline:none;
+                 background:rgba(0,0,0,.42); color:var(--ink); backdrop-filter:blur(8px); }
+  textarea.big:focus { border-color:var(--accent); }
+  textarea.big::placeholder { color:#696974; }
+  .bar { display:flex; gap:10px; align-items:center; margin:12px 0 16px; }
+  button { font:15px inherit; padding:8px 17px; border-radius:9px; border:1px solid var(--line);
+           background:rgba(255,255,255,.07); color:var(--ink); cursor:pointer; backdrop-filter:blur(6px);
+           white-space:nowrap; }
+  button:hover { background:rgba(255,255,255,.13); }
+  button.go { background:linear-gradient(180deg,#ffa952,#e8710a); border-color:#e8710a; color:#fff; font-weight:600; }
+  button.danger { background:rgba(192,57,43,.75); border-color:rgba(255,110,90,.5); color:#fff; }
+  button:disabled { opacity:.4; cursor:default; }
+  .list { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden;
+          backdrop-filter:blur(10px); }
+  .row { display:grid; grid-template-columns:34px 1fr; gap:10px; padding:12px 17px; border-top:1px solid var(--line); }
+  .row:first-child { border-top:none; }
+  .row:hover { background:rgba(255,154,60,.07); }
+  .no { color:#66666f; font-size:12px; text-align:right; padding-top:3px; }
+  .who { font-weight:600; font-size:14px; color:#c9c9d2; letter-spacing:.3px; }
+  .said { font-size:17px; color:var(--ink); }
+  .tag { display:inline-block; margin-top:6px; margin-right:6px; font-size:13px; color:#ffbf80;
+         background:rgba(255,154,60,.13); border:1px solid rgba(255,154,60,.3); border-radius:6px; padding:1px 7px; }
+  .tag.gray { color:#a8a8b2; background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.12); }
+  .hint { margin-top:16px; color:var(--mute); font-size:14px; }
+  .hint b { color:#d5d5dc; }
+  .miss { color:#ff8a76; font-weight:600; }
+  a { color:var(--accent); }
+
+  #menu { position:fixed; display:none; background:rgba(28,28,34,.96); border:1px solid var(--line);
+          border-radius:10px; box-shadow:0 12px 40px rgba(0,0,0,.5); padding:5px; z-index:50; min-width:200px;
+          backdrop-filter:blur(10px); }
+  #menu div { padding:8px 11px; border-radius:6px; font-size:14px; cursor:pointer; }
+  #menu div:hover { background:var(--accent); color:#fff; }
+
+  #mask { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; z-index:60;
+          align-items:center; justify-content:center; backdrop-filter:blur(3px); }
+  #dlg { width:540px; background:#17171c; border:1px solid var(--line); border-radius:16px; padding:23px;
+         box-shadow:0 30px 90px rgba(0,0,0,.7); }
+  #dlg h2 { margin:0 0 3px; font-size:17px; }
+  #dlg .quote { color:var(--mute); font-size:13px; margin-bottom:14px; }
+  #dlg textarea { width:100%; height:78px; resize:vertical; padding:11px 13px; font:17px/1.7 inherit;
+                  border:1px solid var(--line); border-radius:10px; outline:none;
+                  background:rgba(0,0,0,.4); color:var(--ink); }
+  #dlg textarea:focus { border-color:var(--accent); }
+
+  /* ---------- 声库卡片（2026-11-01 重做） ---------- */
+  .libhead { display:flex; align-items:flex-end; justify-content:space-between; gap:16px;
+             flex-wrap:wrap; margin-bottom:6px; }
+  .libtitle { font-weight:600; font-size:22px; letter-spacing:.5px; }
+  .libsub { color:#8a8a94; font-size:13.5px; margin-top:4px; line-height:1.7; }
+  .libbtns { display:flex; gap:8px; flex-wrap:wrap; }
+  .libsec { font-weight:600; margin:20px 0 10px; font-size:15px; color:#e8e8ee; }
+  .libsec span { font-weight:400; color:#8a8a94; font-size:13px; margin-left:6px; }
+  .libgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(196px,1fr)); gap:12px; }
+  .libgrid:empty::after { content:'（还没有声音）'; color:#77777f; font-size:13px; }
+  .vcard { background:var(--card); border:1px solid var(--line); border-radius:16px;
+           padding:14px 14px 12px; backdrop-filter:blur(10px);
+           display:flex; flex-direction:column; gap:3px; transition:border-color .18s, transform .18s; }
+  .vcard:hover { border-color:rgba(255,154,60,.5); transform:translateY(-1px); }
+  .ava { width:58px; height:58px; border-radius:50%; display:flex; align-items:center;
+         justify-content:center; font-size:24px; font-weight:600; color:#fff;
+         background-size:cover; background-position:center; margin-bottom:7px;
+         box-shadow:0 8px 20px rgba(0,0,0,.45); flex:none; }
+  .vname { font-weight:600; font-size:15.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .vdesc { color:#8a8a94; font-size:12.5px; line-height:1.5; min-height:34px; }
+  .vtags { display:flex; gap:5px; flex-wrap:wrap; margin-top:3px; }
+  .vtag { font-size:11.5px; color:#ffbf80; background:rgba(255,154,60,.13);
+          border:1px solid rgba(255,154,60,.3); border-radius:5px; padding:0 6px; }
+  .vtag.gray { color:#a8a8b2; background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.12); }
+  .vtag.dia { color:#8fd6ff; background:rgba(96,180,255,.12); border-color:rgba(120,190,255,.35); }
+  .vacts { display:flex; gap:6px; margin-top:9px; }
+  .vacts button { padding:5px 10px; font-size:13px; border-radius:8px; }
+
+  /* ---------- 朗读单元（2026-11-01） ---------- */
+  .readintro { color:#8a8a94; font-size:13.5px; line-height:1.85; margin:4px 0 12px; }
+  .readintro b { color:#d5d5dc; }
+  .readmsg { color:#8f8f99; font-size:13px; }
+  .readlbl { color:#a9a9b4; font-size:13.5px; }
+  .readchk { font-size:13.5px; color:#a9a9b4; display:flex; align-items:center; gap:6px; }
+  .readsel { min-width:190px; font:14px inherit; padding:7px 10px; border-radius:9px;
+             border:1px solid var(--line); background:rgba(0,0,0,.35); color:var(--ink); }
+  .readbody { min-height:130px; border:1px solid var(--line); border-radius:12px; padding:14px 16px;
+              background:rgba(0,0,0,.30); font-size:17px; line-height:1.95; cursor:text; }
+  .readbody .rblock { margin:0 0 16px; padding:2px 0; border-radius:6px; position:relative; }
+  .readbody .rblock:last-child { margin-bottom:0; }
+  .readbody .rblock:hover { background:rgba(255,154,60,.055); }
+  .readbody .rwho { font-size:12px; color:#7d7d88; letter-spacing:.4px; margin-bottom:2px; }
+  .readbody .ristag { display:inline-block; margin:0 3px; padding:0 7px; border-radius:5px;
+                      background:rgba(255,154,60,.16); border:1px solid rgba(255,154,60,.35);
+                      color:#ffbf80; font-size:12px; vertical-align:1px; user-select:none; }
+  .readbody .rspan { background:rgba(110,185,255,.14); border-bottom:1px dashed rgba(120,190,255,.6); }
+  .readbody .rspan.role { background:rgba(140,255,190,.12); border-bottom-color:rgba(140,255,190,.55); }
+  .readempty { color:#77777f; font-size:14px; }
+  .readdl { display:inline-block; padding:7px 15px; border-radius:9px; border:1px solid var(--line);
+            background:rgba(255,255,255,.07); color:var(--ink); text-decoration:none; font-size:14px; }
+  .readdl:hover { background:rgba(255,255,255,.13); }
+  .readdl.hidden { display:none; }
+
+  .ctxmenu { position:fixed; display:none; background:rgba(28,28,34,.97); border:1px solid var(--line);
+             border-radius:10px; box-shadow:0 14px 44px rgba(0,0,0,.62); padding:5px; z-index:70;
+             min-width:200px; backdrop-filter:blur(10px); }
+  .ctxmenu .ci { padding:8px 11px; border-radius:6px; font-size:14px; cursor:pointer; white-space:nowrap; }
+  .ctxmenu .ci:hover { background:var(--accent); color:#fff; }
+  .ctxmenu .cisep { height:1px; background:var(--line); margin:5px 8px; }
+  .ctxmenu .chd { padding:6px 11px 3px; font-size:11.5px; color:#77777f; letter-spacing:.5px; }
+
+  .rmask { position:fixed; inset:0; background:rgba(0,0,0,.58); display:flex; align-items:center;
+           justify-content:center; z-index:75; backdrop-filter:blur(3px); }
+  .rmask.hidden { display:none; }
+  .rdlg { width:560px; max-width:calc(100vw - 40px); background:#17171c; border:1px solid var(--line);
+          border-radius:16px; padding:23px; box-shadow:0 30px 90px rgba(0,0,0,.7); }
+  .rdlg h2 { margin:0 0 3px; font-size:17px; }
+  .rdlg .quote { color:var(--mute); font-size:13px; margin-bottom:14px; }
+  .rdlg textarea { width:100%; height:82px; resize:vertical; padding:11px 13px; font:17px/1.7 inherit;
+                   border:1px solid var(--line); border-radius:10px; outline:none;
+                   background:rgba(0,0,0,.4); color:var(--ink); }
+  .rdlg textarea:focus { border-color:var(--accent); }
+
+  /* 录音确认框：真的弹出来盖住页面，24 寸屏也不会漏看（2026-10-30 用户反馈） */
+  #recModal { position:fixed; inset:0; z-index:80; display:flex; align-items:center;
+              justify-content:center; background:rgba(0,0,0,.66); backdrop-filter:blur(5px); }
+  #recModal.hidden { display:none; }
+  .rmBox { width:480px; max-width:calc(100vw - 44px); background:#191920; border:1px solid var(--line);
+           border-radius:16px; padding:26px 26px 20px; box-shadow:0 30px 100px rgba(0,0,0,.8); }
+  .rmBox h2 { margin:0 0 10px; font-size:24px; letter-spacing:.3px; }
+  .rmBox .rmMsg { color:#c9c9d3; font-size:17px; line-height:1.85; margin-bottom:18px; }
+  .rmBox .rmMsg b { color:#ffbf80; }
+  .rmBox .rmMsg .warn { color:#ff8a76; }
+  .rmBox audio { width:100%; margin:0 0 18px; display:block; }
+  .rmBox audio.hidden { display:none; }
+  .rmBox .rmBtns { display:flex; gap:10px; flex-wrap:wrap; }
+  .rmBox .rmBtns button { font-size:17px; padding:13px 24px; }
+  #saveModal { position:fixed; inset:0; z-index:81; display:flex; align-items:center;
+               justify-content:center; background:rgba(0,0,0,.66); backdrop-filter:blur(5px); }
+  #saveModal.hidden { display:none; }
+  #saveModal .rmBox { width:640px; max-height:88vh; display:flex; flex-direction:column; }
+  #pagesList { max-height:44vh; overflow:auto; margin:0 0 16px;
+               border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .prow { display:flex; align-items:center; gap:10px; padding:9px 4px;
+          border-bottom:1px solid rgba(255,255,255,.06); font-size:15px; }
+  .prow:last-child { border-bottom:none; }
+  .prow .pno { flex:none; width:66px; color:#d2d2da; }
+  .prow .ptext { flex:1; min-width:0; color:#9d9da8; font-size:14px; cursor:pointer;
+                 white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .prow .ptext:hover { color:#ffbf80; text-decoration:underline; }
+  /* 改这一页的讲稿 */
+  #dialectModal { position:fixed; inset:0; z-index:83; display:flex; align-items:center;
+                  justify-content:center; background:rgba(0,0,0,.7); backdrop-filter:blur(5px); }
+  #dialectModal.hidden { display:none; }
+  #dialectModal .rmBox.wide { width:720px; max-height:90vh; display:flex; flex-direction:column; }
+  .drow { display:flex; gap:10px; align-items:center; padding:9px 2px;
+          border-bottom:1px solid rgba(255,255,255,.07); font-size:15px; }
+  .drow .dn { flex:none; width:52px; color:#ffbf80; }
+  .drow .dt { flex:1; min-width:0; color:#dcdce4; }
+  .drow button { flex:none; font-size:13px; padding:5px 12px; }
+  #editPageModal { position:fixed; inset:0; z-index:82; display:flex; align-items:center;
+                   justify-content:center; background:rgba(0,0,0,.7); backdrop-filter:blur(5px); }
+  #editPageModal.hidden { display:none; }
+  #editPageModal .rmBox { width:660px; max-height:88vh; display:flex; flex-direction:column; }
+  #peText { width:100%; height:230px; resize:vertical; padding:12px 14px; font:16px/1.85 inherit;
+            border:1px solid var(--line); border-radius:10px; outline:none; margin-bottom:6px;
+            background:rgba(0,0,0,.42); color:var(--ink); }
+  #peText:focus { border-color:var(--accent); }
+  #editPageModal .tip { color:#8a8a94; font-size:13.5px; margin-bottom:14px; }
+  .prow .psec { flex:none; width:52px; text-align:right; color:#8a8a94; font-size:14px; }
+  .prow.dim { opacity:.45; }
+  .prow button { flex:none; font-size:14px; padding:6px 13px; }
+  .rmBox .rmBtns .go { font-size:18px; padding:13px 30px; }
+  .sliders { margin:14px 0 4px; }
+  .sl { display:grid; grid-template-columns:60px 1fr; align-items:center; gap:10px; margin:9px 0; font-size:13px; color:#a8a8b2; }
+  .sl input { -webkit-appearance:none; height:4px; border-radius:3px; background:rgba(255,255,255,.16); outline:none; }
+  .sl input::-webkit-slider-thumb { -webkit-appearance:none; width:18px; height:18px; border-radius:50%;
+        background:var(--accent); border:3px solid #17171c; box-shadow:0 0 0 1px rgba(255,255,255,.2); cursor:pointer; }
+  .preview { margin:9px 0 14px; padding:11px 14px; background:rgba(255,154,60,.08);
+             border:1px dashed rgba(255,154,60,.35); border-radius:10px; font-size:14px; color:#e5c3a0; }
+  .preview b { color:#ffb877; }
+  .tips { margin:8px 0 16px; font-size:13.5px; color:var(--mute); line-height:2.05; }
+  .tips i { font-style:normal; color:#ffbf80; background:rgba(255,154,60,.13); border-radius:5px; padding:1px 6px; cursor:pointer; }
+  .warn { color:#ff7f6b; }
+  .btns { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+  .prog { display:none; margin:14px 0; }
+  .prog .track { height:7px; background:rgba(255,255,255,.1); border-radius:4px; overflow:hidden; }
+  .prog .fill { height:100%; width:0; background:linear-gradient(90deg,#ffa952,#e8710a); transition:width .4s; }
+  .prog .msg { font-size:14px; color:var(--mute); margin-top:7px; }
+  audio { width:100%; margin-top:12px; }
+  .chk { margin-right:8px; accent-color:var(--accent); }
+  .hidden { display:none !important; }
+  #fmenu { position:absolute; right:0; top:44px; display:none; background:rgba(28,28,34,.97);
+           border:1px solid var(--line); border-radius:10px; box-shadow:0 14px 40px rgba(0,0,0,.55);
+           padding:5px; min-width:170px; z-index:40; backdrop-filter:blur(10px); }
+  #fmenu div { padding:8px 12px; border-radius:6px; font-size:14px; cursor:pointer; }
+  #fmenu div:hover { background:var(--accent); color:#fff; }
+  #fmenu .sep { height:1px; background:var(--line); margin:5px 8px; padding:0; cursor:default; }
+  #fmenu .sep:hover { background:var(--line); }
+  #openDlg { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; z-index:70;
+             align-items:center; justify-content:center; }
+  #openBox { width:460px; background:#17171c; border:1px solid var(--line); border-radius:14px; padding:20px; }
+  #openBox h3 { margin:0 0 12px; font-size:16px; }
+  #openBox .item { padding:10px 12px; border-radius:8px; cursor:pointer; border:1px solid transparent; }
+  #openBox .item:hover { background:rgba(255,154,60,.12); border-color:rgba(255,154,60,.3); }
+  #openBox .item small { color:var(--mute); margin-left:8px; }
+</style>
+</head>
+<body>
+<div id="busyBar" style="position:fixed;left:0;top:0;height:3px;width:0;z-index:210;
+     background:linear-gradient(90deg,#ffa952,#e8710a);opacity:0;transition:width .3s,opacity .3s"></div>
+
+<div id="errBar" style="position:fixed;left:0;right:0;top:0;z-index:200;display:none;
+     background:#5a1b16;border-bottom:1px solid #ff7f6b;color:#ffd6cf;font:14px/1.6 -apple-system,sans-serif;
+     padding:9px 16px;white-space:pre-wrap">出错</div>
+
+<div class="wrap">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start">
+    <div><h1>VoiceCaster</h1><div class="sub">AI 广播剧作坊</div></div>
+    <div style="position:relative;margin-top:8px;display:flex;gap:8px;align-items:flex-start">
+      <button onclick="toggleFM(event)">文件 ▾</button>
+      <button id="resumeBtn" onclick="resumePpt(true)"
+              style="background:rgba(255,154,60,.10);border-color:rgba(255,154,60,.35);color:#c9a486;opacity:.72"
+              title="刷新或关掉页面之后，点它重新接上正在跑的那一轮 —— 它管的是整个任务，哪个页签都看得到">
+        ↻ 重新监视进度</button>
+      <div id="fmenu">
+        <div onclick="newProject()">新建</div>
+        <div onclick="saveProject()">保存项目…<span style="color:#777;font-size:12.5px;margin-left:6px">剧本 + 语气</span></div>
+        <div onclick="exportCast()">保存角色包（.cast）…<span style="color:#777;font-size:12.5px;margin-left:6px">这部剧的全套嗓子</span></div>
+        <div onclick="showOpen()">打开…</div>
+        <div class="sep"></div>
+        <div onclick="pickDoc()">导入文稿…<span style="color:#777;font-size:12.5px;margin-left:6px">PDF / Word / TXT</span></div>
+        <div onclick="pickScriptFile()">导入剧本…<span style="color:#777;font-size:12.5px;margin-left:6px">读完自动对角色</span></div>
+        <div class="sep"></div>
+        <div onclick="pickCast()">载入角色包（.cast）…<span style="color:#777;font-size:12.5px;margin-left:6px">一堆人一起回来</span></div>
+        <div class="sep"></div>
+        <div onclick="exportDocx()">导出 Word</div>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="docxFile" accept=".docx,.doc,.pdf,.txt,.md,.csv,.rtf" class="hidden">
+  <input type="file" id="castFile" accept=".cast,application/zip" class="hidden">
+  <div style="color:#8a8a94;font-size:13px;margin:-6px 0 14px;letter-spacing:.3px">
+    先在「<a href="#" onclick="showTab('voices');return false">声库</a>」里挑一个声音（或克隆自己的）→
+    再用「<a href="#" onclick="showTab('script');return false">剧本</a>」「<a href="#" onclick="showTab('ppt');return false">PPT 讲解</a>」「<a href="#" onclick="showTab('read');return false">朗读</a>」做内容 →
+    最后导出
+  </div>
+  <div class="tabs">
+    <span class="tab active" id="tabVoices" data-tab="voices" onclick="showTab('voices')">声库</span>
+    <span class="tab" id="tabChar" data-tab="char" onclick="showTab('char')">角色</span>
+    <span class="tab" id="tabScript" data-tab="script" onclick="showTab('script')">剧本</span>
+    <span class="tab" id="tabPpt" data-tab="ppt" onclick="showTab('ppt')">PPT 讲解</span>
+    <span class="tab" id="tabClone" data-tab="clone" onclick="showTab('clone')">声音克隆</span>
+    <span class="tab" id="tabRead" data-tab="read" onclick="showTab('read')">朗读</span>
+  </div>
+
+  <!-- 角色 -->
+  <div id="paneChar" class="hidden">
+    <div class="bar"><button onclick="loadChars()">刷新</button>
+      <button class="danger" id="delBtn" onclick="delChars()" disabled>删除勾选的</button>
+      <span id="charMsg" style="color:#666;font-size:13px"></span></div>
+    <div class="list" id="charList"></div>
+
+    <div class="list" id="charCreateBox" style="margin-top:16px">
+      <div style="padding:16px 17px">
+        <div style="font-weight:600;margin-bottom:5px">＋ 捏一个新嗓子</div>
+        <div style="color:#8a8a94;font-size:13.5px;line-height:1.8;margin-bottom:10px">
+          写一句描述：他是谁、多大年纪、声音什么样。捏出来先试听，像就收进角色库（自动编号）。
+        </div>
+        <input id="designDesc" placeholder="例：中年男人，声音干、有点累，不笑"
+               style="width:100%;padding:9px 12px;border-radius:9px;border:1px solid var(--line);
+                      background:rgba(0,0,0,.35);color:var(--ink);font:15px inherit">
+        <div class="bar" style="margin-top:10px;flex-wrap:wrap">
+          <button class="go" onclick="doDesign(this)">捏三条听听</button>
+          <input id="designName" placeholder="名字（剧本里就这么写）"
+                 style="flex:1;min-width:160px;padding:8px 11px;border-radius:9px;border:1px solid var(--line);
+                        background:rgba(0,0,0,.35);color:var(--ink);font:14px inherit">
+          <button id="designOkBtn" onclick="designConfirm(this)" disabled>就它了</button>
+          <span id="designMsg" style="color:#666;font-size:13px"></span>
+        </div>
+        <div id="designCands" class="hidden" style="margin-top:10px"></div>
+      </div>
+    </div>
+
+    <div class="list" style="margin-top:14px">
+      <div style="padding:16px 17px">
+        <div style="font-weight:600;margin-bottom:5px">＋ 导入现成的录音（一次选一堆）</div>
+        <div style="color:#8a8a94;font-size:13.5px;line-height:1.8;margin-bottom:10px">
+          学生手机发来的音频，<b>文件名就是角色名</b>（「张三.m4a」→ 张三）。一次选一批，自动转好、编号入库。
+        </div>
+        <div class="bar" style="margin:0;flex-wrap:wrap">
+          <button class="go" onclick="pickBatchAudio()">选一批录音…</button>
+          <span id="batchMsg" style="color:#666;font-size:13px"></span>
+        </div>
+      </div>
+    </div>
+
+    <input type="file" id="batchAudio" multiple
+           accept="audio/*,.m4a,.mp3,.amr,.3gp,.wav,.ogg,.webm,.aac,.flac,.wma" class="hidden">
+
+    <div class="hint" style="margin-top:14px">要克隆<span style="color:#d5d5dc">自己的声音</span>（用你的录音），去「<a href="#" onclick="showTab('clone');return false">声音克隆</a>」那一页。</div>
+  </div>
+
+  <!-- 声库（2026-11-01 重做：放到最左边，官方九条 + 我的声音都在这） -->
+  <div id="paneVoices">
+    <div class="libhead">
+      <div>
+        <div class="libtitle">声库</div>
+        <div class="libsub">官方九条 + 你自己的声音。点开就能试听；剧本、PPT、朗读用的都是这里。</div>
+      </div>
+      <div class="libbtns">
+        <button class="go" onclick="libMake()">＋ 捏一个新嗓子</button>
+        <button onclick="libClone()">＋ 克隆 / 导入</button>
+      </div>
+    </div>
+    <div class="libsec">官方音色 <span>千问自带，不用克隆</span></div>
+    <div id="voiceOfficial" class="libgrid"></div>
+    <div class="libsec">我的声音 <span>克隆的 / 捏出来的 / 从别处导入的</span></div>
+    <div id="voiceUsers" class="libgrid"></div>
+    <div id="voiceMsg" class="readmsg" style="margin-top:12px"></div>
+    <audio id="libAudio" controls class="hidden" style="width:100%;margin-top:12px"></audio>
+  </div>
+
+  <!-- 声库卡片上的「⋯」小菜单 -->
+  <div id="libMenu" class="ctxmenu"></div>
+
+  <!-- 声音克隆 -->
+  <div id="paneClone" class="hidden">
+    <div style="margin-bottom:14px">
+      <div style="font-weight:600;font-size:17px">声音克隆</div>
+      <div style="color:#8a8a94;font-size:13.5px;line-height:1.85;margin-top:4px">
+        录一段你说话的声音（10–20 秒最好，安静环境）。录的时候用平常讲课的口气，别刻意朗读。
+        录完会问你「要不要这段」，要的话就存进克隆库，之后讲课、剧本都用它念。
+      </div>
+    </div>
+
+    <div class="list" style="margin-top:16px">
+      <div style="padding:16px 17px">
+        <div style="font-weight:600;margin-bottom:10px">① 选声卡、录一段</div>
+        <input type="file" id="cloneFile" accept="audio/*" style="display:none">
+        <div class="bar" style="margin:0;flex-wrap:wrap">
+          <button onclick="document.getElementById('cloneFile').click()">选一段录音</button>
+          <select id="micSel" title="录音用哪个声卡"
+                  style="font:14px inherit;padding:6px 9px;border-radius:9px;max-width:220px;
+                         border:1px solid var(--line);background:rgba(255,255,255,.07);color:var(--ink)">
+            <option value="">系统默认麦克风</option>
+          </select>
+          <button onclick="refreshMics()" title="授权后刷新设备名">↻ 刷新设备</button>
+          <button id="recBtn" onclick="toggleRec()">● 直接录（最多 10 秒）</button>
+          <button onclick="showTab('voices')" title="从声库挑一条现成的嗓子，不用再录">导入声库</button>
+          <span id="cloneMsg" style="color:#666;font-size:13px"></span>
+        </div>
+        <div class="bar" style="margin:8px 0 0;flex-wrap:wrap">
+          <span style="color:#8a8a94;font-size:13px">听声音走哪个输出：</span>
+          <select id="outSel" title="播放时用哪个输出设备"
+                  style="font:14px inherit;padding:6px 9px;border-radius:9px;max-width:260px;
+                         border:1px solid var(--line);background:rgba(255,255,255,.07);color:var(--ink)">
+            <option value="">系统默认输出</option>
+          </select>
+          <span id="outMsg" style="color:#666;font-size:12.5px"></span>
+        </div>
+        <div id="meter" style="display:flex;gap:3px;height:20px;margin-top:10px"></div>
+        <div id="cloneBox" class="hidden" style="margin-top:12px">
+          <audio id="cloneAudio" controls style="width:100%"></audio>
+          <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <select id="cloneDialect" title="用哪种方言念（VoxCPM2 自带这几种；文本也写方言字更准）"
+                    style="flex:none;font:14px inherit;padding:8px 10px;border-radius:9px;
+                           border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--ink)">
+              <option value="">普通话</option>
+              <option value="东北话">东北话</option>
+              <option value="四川话">四川话</option>
+              <option value="粤语">粤语</option>
+              <option value="河南话">河南话</option>
+              <option value="陕西话">陕西话</option>
+              <option value="山东话">山东话</option>
+              <option value="天津话">天津话</option>
+              <option value="闽南话">闽南话</option>
+              <option value="吴语">吴语</option>
+            </select>
+            <button id="dialectBtn" onclick="toDialect()"
+                    title="玩梗用：一次看九种方言写法，挑一个就填进去">转九种方言</button>
+            <input id="cloneTestText" placeholder="想试的那句话（不填就念一句标准话；用方言字更准）"
+                   style="flex:1;min-width:240px;padding:8px 11px;border-radius:9px;border:1px solid var(--line);
+                          background:rgba(0,0,0,.35);color:var(--ink);font:14px inherit">
+          </div>
+          <div class="bar" style="margin:10px 0 0">
+            <input id="cloneName" value="我的声音" style="flex:1;padding:8px 11px;border-radius:9px;
+                   border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--ink);font:15px inherit">
+            <button class="go" id="clonePrevBtn" onclick="clonePreview()">生成一句听听</button>
+            <button id="cloneSaveBtn" onclick="cloneSave()" disabled>就用这个声音</button>
+          </div>
+          <div class="prog" id="cloneProgBox" style="display:none;margin-top:10px">
+            <div class="track"><div class="fill" id="cloneFill"></div></div>
+            <div class="msg" id="clonePmsg"></div>
+          </div>
+          <div style="margin-top:10px"><audio id="clonePrev" controls class="hidden" style="width:100%"></audio></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="list" style="margin-top:14px">
+      <div style="padding:16px 17px">
+        <div style="font-weight:600;margin-bottom:10px">② 或者：从视频网页抓一段声音
+          <span style="color:#8a8a94;font-weight:400;font-size:13px">（找只有一个人说话的片段；唱歌、多人、背景音乐重的，克隆出来会带杂音）</span></div>
+        <div class="bar" style="margin:0;flex-wrap:wrap">
+          <input id="urlIn" placeholder="粘链接；B 站那行分享文字整段粘进来也行"
+                 style="flex:1;min-width:300px;padding:8px 11px;border-radius:9px;border:1px solid var(--line);
+                        background:rgba(0,0,0,.35);color:var(--ink);font:14px inherit">
+          <button class="go" id="urlGrabBtn" onclick="grabFromUrl()">抓声音</button>
+          <span id="urlMsg" style="color:#666;font-size:13px"></span>
+        </div>
+        <div class="prog" id="urlProgBox" style="display:none;margin-top:12px">
+          <div class="track"><div class="fill" id="urlFill"></div></div>
+          <div class="msg" id="urlPmsg"></div>
+        </div>
+        <div id="urlBox" class="hidden" style="margin-top:12px">
+          <div style="color:#8a8a94;font-size:13px;margin-bottom:8px">
+            **在波形上点一下**，白框就从那儿开始、往后 15 秒；想微调再拖两边的白手柄（最多 15 秒，拉到头就拖不动）。波形越密的地方声音越大。
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;margin-top:10px">
+            <button id="wavePlayBtn" onclick="playSeg()" title="循环听白框里这一段"
+                    style="flex:none;width:58px;height:58px;border-radius:50%;background:#fff;
+                           color:#15151d;border:none;cursor:pointer;font-size:23px;line-height:1;
+                           display:flex;align-items:center;justify-content:center;
+                           box-shadow:0 4px 16px rgba(0,0,0,.5)">▶</button>
+            <canvas id="waveCanvas" style="display:block;flex:1;min-width:0;height:78px;border-radius:10px;
+                    background:rgba(0,0,0,.42);cursor:ew-resize;touch-action:none"></canvas>
+          </div>
+          <div class="bar" style="margin:10px 0 0;flex-wrap:wrap;align-items:center">
+            <span id="cutInfo" style="font-size:13.5px;color:#a9a9b4">已选 —</span>
+            <button class="go" id="playSegBtn" onclick="playSeg()"
+                    title="只放白框里这一段，按你拖的范围">▶ 听这段</button>
+            <button onclick="cutSegment()" title="截成克隆用的参考音：最多 15 秒（框拖得再长也只取前 15 秒）">截这一段（最多 15 秒）</button>
+            <button id="sepBtn" onclick="separateVocals()" disabled
+                    title="把背景音乐、鼓点拿走，只留人声；十几秒的片段要等半分钟到一分钟">去掉背景音乐（只留人声）</button>
+            <button id="useSegBtn" onclick="useSegment()" disabled>就用这一段</button>
+            <audio id="urlAudio" style="display:none"></audio>
+          </div>
+          <div style="margin-top:10px"><audio id="segAudio" controls class="hidden" style="width:100%"></audio></div>
+          <div id="segSepNote" class="hidden" style="margin-top:6px;font-size:13px;color:#8fd6ff">
+            现在试听、以及「就用这一段」，用的都是<b>去掉背景</b>的人声。
+            <a href="#" onclick="restoreCut();return false">听一下分离前的</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="font-weight:600;margin:20px 0 8px">③ 已经确认的声音</div>
+    <div class="list" id="cloneList">
+      <div class="row"><div class="no"></div><div style="color:#999">还没有确认过的声音</div></div>
+    </div>
+    <div class="hint">确认过的声音都在这里，可以改名、可以删。剧本和 PPT 讲解的角色下拉里也能选到。</div>
+
+  </div>
+
+  <!-- 朗读单元（2026-11-01：接替原来的「情绪试音」） -->
+  <div id="paneRead" class="hidden">
+    <div class="list"><div style="padding:16px 17px">
+      <div style="font-weight:600;font-size:17px">朗读单元</div>
+      <div class="readintro">
+        上面写，点 <b>投递</b> 下去念。朗读框里的字是锁住的——<b>选中一段右键</b>改角色或写一句指令，
+        <b>在字里点一下右键</b>插停顿、笑声。
+      </div>
+      <textarea class="big" id="readEdit" style="height:170px"
+        placeholder="把要念的故事贴进来。空一行分一段，朗读框按段排。"></textarea>
+      <div class="bar" style="margin:12px 0 0">
+        <button class="go" onclick="readDeliver()">投递到朗读框 ↓</button>
+        <button onclick="readClear()">清空</button>
+        <span id="readEditMsg" class="readmsg"></span>
+      </div>
+    </div></div>
+
+    <div class="list" style="margin-top:12px"><div style="padding:16px 17px">
+      <div class="bar" style="margin:0 0 12px;flex-wrap:wrap">
+        <span class="readlbl">旁白：</span>
+        <select id="readNarr" class="readsel"></select>
+        <button id="readAdopt" onclick="adoptVoice('readNarr')" title="把上面挑中的官方音色收成你自己的声音（之后能改名、配方言、换照片）"
+                style="font:13px inherit;padding:5px 9px;border-radius:8px;border:1px solid var(--line);
+                       background:rgba(255,255,255,.06);color:var(--ink);cursor:pointer">收成我的</button>
+        <label class="readchk"><input type="checkbox" id="readAutoDialect" checked>
+          自动认方言（认出来那一段交给 Vox 念）</label>
+        <button class="go" id="readGo" onclick="readGenerate()">生成朗读</button>
+        <span id="readMsg" class="readmsg"></span>
+      </div>
+      <div class="prog" id="readProg" style="display:none">
+        <div class="track"><div class="fill" id="readFill"></div></div>
+        <div class="msg" id="readPmsg"></div>
+      </div>
+      <div id="readBody" class="readbody"></div>
+      <div style="margin-top:12px"><audio id="readAudio" controls class="hidden" style="width:100%"></audio></div>
+      <div class="bar" style="margin:10px 0 0">
+        <a id="readDownload" class="readdl hidden" download>⤓ 下载整段 wav</a>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- 朗读框的右键菜单（三项：指令 / 角色 / 插入） -->
+  <div id="readMenu" class="ctxmenu"></div>
+
+  <!-- 写一句话指令 -->
+  <div id="readMask" class="rmask hidden"><div class="rdlg">
+    <h2>对这一句说一句话</h2>
+    <div class="quote" id="readQuote"></div>
+    <textarea id="readIns" placeholder="例：压低声音说 / 愤怒地吼出来 / 像在图书馆里轻声提醒"></textarea>
+    <div class="bar" style="margin:12px 0 0">
+      <button onclick="readInsClose(false)">取消</button>
+      <button class="go" onclick="readInsClose(true)">就这句</button>
+    </div>
+  </div></div>
+
+  <!-- 剧本 -->
+  <div id="paneScript" class="hidden">
+    <textarea class="big" id="scriptIn" placeholder="阿达：这次的任务，先核对截图信息。
+小迪：明白老板。
+〔阿达站起身，走到窗前〕
+阿达：我明白你的顾虑。但能省就省。"></textarea>
+    <div class="bar">
+      <button class="go" onclick="doParse()">读剧本</button>
+      <button class="go" id="rehBtn" onclick="doRehearse()" disabled>排演（整段跑完再出声）</button>
+      <button onclick="addScene()" title="在剧本末尾插一条固定的场分隔线">＋ 加一场</button>
+    </div>
+    <div class="prog" id="prog"><div class="track"><div class="fill" id="fill"></div></div>
+      <div class="msg" id="pmsg"></div></div>
+    <div id="sumBox"></div>
+    <div class="list" id="lineList"><div class="row"><div class="no"></div>
+      <div style="color:#999">先把剧本贴进去，点「读剧本」</div></div></div>
+    <div id="result"></div>
+
+    <div class="list" style="margin-top:16px">
+      <div style="padding:14px 16px">
+        <div style="font-weight:600;margin-bottom:5px">对视频打点（可选）</div>
+        <div style="color:#8a8a94;font-size:13.5px;line-height:1.8;margin-bottom:10px">
+          加载一个视频只用来对时间，<b>原视频不会存进项目</b>。
+          先在下面点一句台词，播到位置后按「打点」；导出的清单里就会写这一句的时间。
+        </div>
+        <input type="file" id="vidFile" accept="video/*" style="display:none">
+        <div class="bar" style="margin:0;flex-wrap:wrap">
+          <button onclick="document.getElementById('vidFile').click()">选一个视频</button>
+          <button id="markBtn" onclick="addMark()" disabled>打点（绑到选中的那句）</button>
+          <span id="markMsg" style="color:#666;font-size:13px"></span>
+        </div>
+        <video id="vid" controls style="width:100%;margin-top:12px;display:none;border-radius:10px"></video>
+        <div id="markList" style="margin-top:10px"></div>
+      </div>
+    </div>
+
+    <div class="hint"><b>右键任意一句</b>，给这一句单独加说话的声音。没加的就按角色本来的声线念。</div>
+  </div>
+
+  <!-- PPT 讲解 -->
+  <div id="panePpt" class="hidden">
+    <input type="file" id="pptxFile" accept=".pptx" class="hidden">
+    <div class="bar" style="flex-wrap:wrap">
+      <button class="go" onclick="pickPptx()" style="white-space:nowrap">导入 PPT 课件</button>
+      <select id="pptPick" onchange="openPptByName(this.value)"
+              title="已经导入过的课件都在这儿，点一下直接装回来（不用重新上传）"
+              style="font:14px inherit;padding:6px 9px;border-radius:9px;border:1px solid var(--line);
+                     background:rgba(255,255,255,.07);color:var(--ink);max-width:230px">
+        <option value="">打开已有课件…</option>
+      </select>
+      <select id="pptChar" style="font:15px inherit;padding:7px 10px;border-radius:9px;
+              border:1px solid var(--line);background:rgba(255,255,255,.07);color:var(--ink)"></select>
+      <button onclick="adoptVoice('pptChar')" title="把上面挑中的官方音色收成你自己的声音（之后能改名、配方言、换照片）"
+              style="font:13px inherit;padding:7px 10px;border-radius:9px;border:1px solid var(--line);
+                     background:rgba(255,255,255,.06);color:var(--ink);cursor:pointer">收成我的</button>
+      <button class="go" id="pptBuildBtn" onclick="doPptBuild()" disabled>生成讲解（录音机）</button>
+      <button id="pptPatchBtn" onclick="doPptBuild(true)" disabled title="跳过已经有音频的页">只补没做的页</button>
+      <button onclick="openListenPage()" title="跑到哪儿听哪儿：新开一页，一页一行的播放器，刷新就是最新">
+        ⧉ 边听边做</button>
+      <button onclick="playAllPpt()" title="按页序一页接一页地放">▶ 连播整册</button>
+      <button onclick="stopAllPpt()" title="停掉连播">■ 停</button>
+      <select id="pptSpeed" title="念得快慢（音高不变）"
+              style="font:14px inherit;padding:6px 9px;border-radius:9px;border:1px solid var(--line);
+                     background:rgba(255,255,255,.07);color:var(--ink)">
+        <option value="1.00" selected>语速：原速（默认）</option>
+        <option value="0.95">语速：稍慢</option>
+        <option value="0.90">语速：慢一档</option>
+      </select>
+      <select id="pptFmt" title="讲解音频存成什么格式"
+              style="font:14px inherit;padding:6px 9px;border-radius:9px;border:1px solid var(--line);
+                     background:rgba(255,255,255,.07);color:var(--ink)">
+        <option value="mp3">MP3（默认，老电脑也能放）</option>
+        <option value="m4a">M4A（更小，手机友好）</option>
+        <option value="wav">WAV（母版）</option>
+      </select>
+      <button onclick="pptBundle()" title="按页序打包音频，附术语表配置">下载音频包</button>
+      <span id="pptMsg" style="color:#666;font-size:13px"></span>
+    </div>
+    <div class="prog" id="pptProg"><div class="track"><div class="fill" id="pptFill"></div></div>
+      <div class="msg" id="pptPmsg"></div></div>
+    <div class="list" id="pptList"><div class="row"><div class="no"></div>
+      <div style="color:#999">导入一份 .pptx，这里会列出每页拆出来的句子</div></div></div>
+    <div id="pptResult"></div>
+    <div class="hint">
+      抽的是每页<b>备注</b>（没有备注就用页面正文）。每页拆成能单播的短句，
+      合成完一条音频贴在那一页，右下角一个大播放键。生成慢，不用等，跑完下载。
+    </div>
+
+    <details style="margin-top:16px">
+      <summary style="cursor:pointer;color:#ffbf80;font-size:14px">音乐术语表（中文里夹的外语词，按那个语言读）</summary>
+      <div style="color:#8a8a94;font-size:13px;line-height:1.8;margin:8px 0 10px">
+        命中术语时，会在它前后断开，让模型当成独立的外语词读，不会吞进中文语流。
+        这张表只由你维护，我不往里塞别人的词表。
+      </div>
+      <div class="list" id="glossList"></div>
+      <div class="bar" style="margin-top:10px;flex-wrap:wrap">
+        <input id="gTerm" placeholder="术语，如 Allegro" style="flex:1;min-width:140px;padding:7px 10px;
+               border-radius:9px;border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--ink);font:14px inherit">
+        <select id="gLang" style="font:14px inherit;padding:7px 9px;border-radius:9px;
+                border:1px solid var(--line);background:rgba(255,255,255,.07);color:var(--ink)">
+          <option value="it">意大利语 it</option>
+          <option value="de">德语 de</option>
+          <option value="en">英语 en</option>
+          <option value="fr">法语 fr</option>
+          <option value="la">拉丁语 la</option>
+        </select>
+        <input id="gNote" placeholder="备注（可空）" style="flex:1;min-width:120px;padding:7px 10px;
+               border-radius:9px;border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--ink);font:14px inherit">
+        <button onclick="glossAdd()">加一条</button>
+      </div>
+      <div class="bar" style="margin:8px 0 0">
+        <button class="go" onclick="glossSave()">保存术语表</button>
+        <span id="glossMsg" style="color:#666;font-size:13px"></span>
+      </div>
+    </details>
+  </div>
+</div>
+
+<div id="menu" class="ctxmenu"><div id="mi">给这句加说话声音</div></div>
+
+<div id="openDlg"><div id="openBox"></div></div>
+
+<div id="mask"><div id="dlg">
+  <h2 id="dt"></h2>
+  <div class="quote" id="dq"></div>
+  <textarea id="dv" placeholder="例：声音压得很低，说得很慢，像在忍着"></textarea>
+  <div class="sliders">
+    <div class="sl"><span>语速</span><input type="range" id="rSpeed" min="0" max="100" value="50"></div>
+    <div class="sl"><span>力度</span><input type="range" id="rForce" min="0" max="100" value="50"></div>
+  </div>
+  <div class="preview" id="preview"></div>
+  <div class="tips">
+    <b>点一下填进去</b>：<br>
+    <i>声音压得很低，气声，贴着话筒</i><i>声音变远，像从门外传来</i>
+    <i>说得很慢，一字一句</i><i>声音发抖，气息不稳</i><i>哭腔，抽泣，声音碎</i><br>
+    <span class="warn">别写：怒吼 / 大喊 / 尖叫</span>（会崩，出来一串哼声）
+    &nbsp;·&nbsp;<span class="warn">也别写：大声 / 小声</span>（它不听，音量留给后期）
+  </div>
+  <div class="btns"><button onclick="closeDlg(false)">取消</button>
+    <button class="go" onclick="closeDlg(true)">用这句声音</button>
+    <button onclick="closeDlg('clear')">去掉这句的声音</button></div>
+</div></div>
+
+<!-- 一次看九种方言：挑一个就用（2026-10-30） -->
+<div id="dialectModal" class="hidden">
+  <div class="rmBox wide">
+    <h2>九种方言（只是换个说法，意思不动）</h2>
+    <div class="rmMsg" id="dialectSrc"></div>
+    <div id="dialectList" style="max-height:48vh;overflow:auto;margin-bottom:16px"></div>
+    <div class="rmBtns"><button onclick="document.getElementById('dialectModal').classList.add('hidden')">关掉</button></div>
+  </div>
+</div>
+
+<!-- 点某页的首句 / 双击那一行：把这一页的话全写出来，改完就只重做这一页 -->
+<div id="editPageModal" class="hidden">
+  <div class="rmBox">
+    <h2 id="peTitle">这一页的讲稿</h2>
+    <div class="rmMsg">改完点「确定」，就按新的念法重做这一页 —— 别的页不动。</div>
+    <textarea id="peText" spellcheck="false"></textarea>
+    <div class="tip">一行一句。删掉一行就是这一句不念了；加一行就多念一句。</div>
+    <div class="rmBtns">
+      <button class="go" onclick="savePageEditor()">确定，重做这页</button>
+      <button onclick="closePageEditor()">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 全部做完之后：问一句存到哪儿（2026-10-30 用户要求「弄完弹窗保存在原地 / 覆盖原 PPT」） -->
+<div id="saveModal" class="hidden">
+  <div class="rmBox">
+    <h2>全部做完了</h2>
+    <div class="rmMsg" id="saveMsg"></div>
+    <div id="pagesList"></div>
+    <div class="rmBtns">
+      <button class="go" onclick="pptSaveAs()">存到原位置（覆盖）</button>
+      <button onclick="pptDownload()">下载一份</button>
+      <button onclick="saveModalClose()">先这样</button>
+    </div>
+  </div>
+</div>
+
+<!-- 录音确认：录完真的弹出来问一句（2026-10-30 用户反馈「没弹出对话框」） -->
+<div id="recModal" class="hidden">
+  <div class="rmBox">
+    <h2 id="rmTitle">这段能用吗？</h2>
+    <div id="rmMsg" class="rmMsg"></div>
+    <audio id="rmAudio" controls></audio>
+    <div class="rmBtns">
+      <button id="rmReplay" onclick="recReplay()">▶ 再听一遍</button>
+      <button class="go" id="rmAccept" onclick="recAccept()">就用这段</button>
+      <button id="rmRedo" onclick="recDiscard()">重录</button>
+      <button id="rmOk" onclick="recFailClose()" class="hidden">知道了</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* 2026-10-30：用户遇到「跑到一半后面就没了」，而页面上什么都不说。
+   从今往后，前端出任何错都摊在顶上，别让人对着空白猜。 */
+/* 2026-10-30：任何要等的事都走这一条 —— 顶上一根细线往前走，
+   不用给每个按钮都做一根进度条。busyStart(大致要几秒) / busyDone()。 */
+let BUSY = {t: null, t0: 0, est: 10};
+function busyStart(estSec){
+  const b = document.getElementById('busyBar');
+  if(!b) return;
+  clearInterval(BUSY.t);
+  BUSY.t0 = Date.now();
+  BUSY.est = Math.max(3, estSec || 10);
+  b.style.opacity = 1;
+  b.style.width = '3%';
+  BUSY.t = setInterval(()=>{
+    const sec = (Date.now() - BUSY.t0) / 1000;
+    b.style.width = Math.min(92, 3 + (sec / BUSY.est) * 89) + '%';
+  }, 250);
+}
+function busyDone(){
+  const b = document.getElementById('busyBar');
+  if(!b) return;
+  clearInterval(BUSY.t); BUSY.t = null;
+  b.style.width = '100%';
+  setTimeout(()=>{ b.style.opacity = 0; setTimeout(()=>{ b.style.width = '0'; }, 340); }, 260);
+}
+
+function showErr(msg){
+  const b = document.getElementById('errBar');
+  if(!b) return;
+  b.style.display = 'block';
+  b.textContent = '⚠ ' + msg + '　（点这条可以关掉）';
+  b.onclick = () => { b.style.display = 'none'; };
+}
+window.addEventListener('error', e => {
+  showErr('页面出错：' + (e.message || '未知') + (e.filename ? '　' + e.filename.split('/').pop() + ':' + e.lineno : ''));
+});
+window.addEventListener('unhandledrejection', e => {
+  const r = e.reason;
+  showErr('后台出错：' + ((r && (r.message || r.error)) || String(r)));
+});
+
+let CHARS = [], LINES = [], VOICES = {}, curRow = null, TASK = null;
+
+/* ================= 朗读单元（2026-11-01：接替「情绪试音」） ================= */
+let READ = { blocks: [], sel: null, tid: '', timer: null };
+let READMENU = {x: 0, y: 0};
+
+function readInit(){
+  readFillNarr();
+  readRender();
+}
+
+function readFillNarr(){
+  const sel = document.getElementById('readNarr');
+  if(!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">（旁白 · 千问默认女声）</option>' + officialOpts(keep) + charOpts(keep);
+  if(keep) sel.value = keep;
+}
+
+function readClear(){
+  const e = document.getElementById('readEdit');
+  if(e) e.value = '';
+  READ.blocks = []; READ.sel = null;
+  const m = document.getElementById('readEditMsg');
+  if(m) m.textContent = '';
+  readRender();
+}
+
+function readSplice(b, at, ins){
+  at = Math.max(0, Math.min(b.text.length, at));
+  b.text = b.text.slice(0, at) + ins + b.text.slice(at);
+  const d = ins.length;
+  b.spans.forEach(s=>{ if(s.start >= at) s.start += d; if(s.end >= at) s.end += d; });
+  b.pauses.forEach(p=>{ if(p.at >= at) p.at += d; });
+}
+
+async function readDeliver(){
+  const t = document.getElementById('readEdit').value.trim();
+  const msg = document.getElementById('readEditMsg');
+  if(!t){ msg.textContent = '编辑框是空的'; return; }
+  const paras = t.split(/\n\s*\n/).map(s=>s.trim()).filter(Boolean);
+  READ.blocks = paras.map(s=>({text: s, cid: null, instruct: '', dialect: '', spans: [], pauses: []}));
+  READ.sel = null;
+  const auto = document.getElementById('readAutoDialect');
+  let note = '排好了 ' + paras.length + ' 段';
+  if(auto && auto.checked){
+    try{
+      const r = await fetch('/api/dialect/detect', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({texts: paras})});
+      const d = await r.json();
+      (d.items||[]).forEach((it, i)=>{
+        if(it && it[0] && READ.blocks[i]) READ.blocks[i].dialect = it[0];
+      });
+      const n = READ.blocks.filter(b=>b.dialect).length;
+      if(n) note += '；其中 ' + n + ' 段认成方言，会交给 Vox 念';
+    }catch(e){}
+  }
+  msg.textContent = note;
+  readRender();
+  const body = document.getElementById('readBody');
+  if(body) body.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+
+function readPaint(b){
+  const n = b.text.length;
+  const cuts = new Set([0, n]);
+  b.spans.forEach(s=>{
+    cuts.add(Math.max(0, Math.min(n, s.start)));
+    cuts.add(Math.max(0, Math.min(n, s.end)));
+  });
+  b.pauses.forEach(p=>cuts.add(Math.max(0, Math.min(n, p.at))));
+  const cs = [...cuts].sort((x, y)=>x-y);
+  const pausAt = at => b.pauses.filter(p=>p.at === at).map(p=>
+    `<span class="ristag" title="生成时这里停 ${p.sec} 秒">\u23f8 ${p.sec}s</span>`).join('');
+  let out = '';
+  for(let i=0; i<cs.length; i++){
+    const a = cs[i], z = (i+1 < cs.length ? cs[i+1] : n);
+    out += pausAt(a);
+    if(z <= a) continue;
+    const piece = b.text.slice(a, z);
+    const act = b.spans.filter(s=>Math.min(s.end, z) > Math.max(s.start, a));
+    if(act.length){
+      const s = act[act.length-1];
+      const isRole = !!s.cid;
+      let tip = isRole ? ('角色：' + whoName(s.cid)) : '一句话指令';
+      if(s.instruct) tip += ' · ' + s.instruct;
+      out += `<span class="rspan${isRole?' role':''}" title="${esc(tip)}">${esc(piece)}</span>`;
+    } else {
+      out += esc(piece);
+    }
+  }
+  out += pausAt(n);
+  return out;
+}
+
+function readRender(){
+  const box = document.getElementById('readBody');
+  if(!box) return;
+  if(!READ.blocks.length){
+    box.innerHTML = '<div class="readempty">上面写好、点「投递到朗读框」，这里就会排成一页。</div>';
+    return;
+  }
+  box.innerHTML = READ.blocks.map((b, bi)=>{
+    const cidName = whoName(b.cid);
+    const tags = [];
+    if(b.dialect) tags.push(`<span class="tag" title="这一段的方言交给 Vox 念">方言：${esc(b.dialect)}</span>`);
+    if(b.instruct) tags.push(`<span class="tag gray">指令：${esc(b.instruct)}</span>`);
+    return `<div class="rblock" data-bi="${bi}">
+      <div class="rwho">${esc(cidName)}</div>
+      <div class="rtext">${readPaint(b)}</div>
+      ${tags.length ? '<div>' + tags.join('') + '</div>' : ''}
+    </div>`;
+  }).join('');
+}
+
+/* 选区 → 段内第几个字（跳过停顿小牌子的字） */
+function readOffset(root, node, offset){
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  let n = 0, cur;
+  while((cur = walker.nextNode())){
+    if(cur.parentElement && cur.parentElement.closest && cur.parentElement.closest('.ristag')) continue;
+    if(cur === node) return n + offset;
+    n += cur.textContent.length;
+  }
+  return n;
+}
+
+document.addEventListener('contextmenu', e=>{
+  const rb = e.target.closest && e.target.closest('#readBody .rblock');
+  if(!rb){ hideReadMenu(); return; }
+  e.preventDefault();
+  const bi = +rb.dataset.bi;
+  const b = READ.blocks[bi];
+  if(!b) return;
+  const sel = window.getSelection();
+  let a = 0, z = 0;
+  if(sel && sel.rangeCount){
+    const rng = sel.getRangeAt(0);
+    if(rb.contains(rng.startContainer) && rb.contains(rng.endContainer)){
+      a = readOffset(rb, rng.startContainer, rng.startOffset);
+      z = readOffset(rb, rng.endContainer, rng.endOffset);
+      if(z < a){ const t = a; a = z; z = t; }
+    }
+  }
+  READ.sel = {bi: bi, start: Math.max(0, Math.min(b.text.length, a)),
+              end: Math.max(0, Math.min(b.text.length, z))};
+  showReadMenu(e.clientX, e.clientY);
+});
+
+function hideReadMenu(){
+  const m = document.getElementById('readMenu');
+  if(m) m.style.display = 'none';
+}
+
+function readMenuMain(){
+  return `
+    <div class="chd">选中一段字之后</div>
+    <div class="ci" onclick="readAskInstruct()">自然语言指令…</div>
+    <div class="ci" onclick="readRoleMenu()">选择角色 →</div>
+    <div class="cisep"></div>
+    <div class="chd">插到光标处</div>
+    <div class="ci" onclick="readInsertMenu()">插入 →</div>`;
+}
+
+function showReadMenu(x, y, html){
+  READMENU = {x: x, y: y};
+  setReadMenu(html || readMenuMain());
+}
+
+function setReadMenu(html){
+  const m = document.getElementById('readMenu');
+  if(!m) return;
+  m.innerHTML = html;
+  m.style.display = 'block';
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(6, Math.min(READMENU.x, innerWidth - w - 10)) + 'px';
+  m.style.top = Math.max(6, Math.min(READMENU.y, innerHeight - h - 10)) + 'px';
+}
+
+function readBack(){ setReadMenu(readMenuMain()); }
+
+document.addEventListener('click', e=>{
+  if(!e.target.closest('#readMenu')) hideReadMenu();
+});
+document.addEventListener('keydown', e=>{
+  if(e.key === 'Escape'){
+    hideReadMenu();
+    const m = document.getElementById('readMask');
+    if(m) m.classList.add('hidden');
+  }
+});
+
+function readRoleMenu(){
+  const html = '<div class="chd">这一段用谁念</div>'
+    + '<div class="chd" style="opacity:.65;font-size:12px;margin:6px 8px 2px">官方音色</div>'
+    + officialList().map(v=>
+        `<div class="ci" onclick="readApplyRole('o:${v.id}')">${esc(v.name)}</div>`).join('')
+    + '<div class="chd" style="opacity:.65;font-size:12px;margin:8px 8px 2px">我的声音</div>'
+    + '<div class="ci" onclick="readApplyRole(null)">旁白</div>'
+    + (CHARS||[]).map(r=>
+        `<div class="ci" onclick="readApplyRole(${r.id})">${r.id} 号 · ${esc(r.name||'没名字')}</div>`).join('')
+    + '<div class="cisep"></div><div class="ci" onclick="readBack()">← 返回</div>';
+  setReadMenu(html);
+}
+
+function readApplyRole(cid){
+  const s = READ.sel;
+  if(!s) return;
+  const b = READ.blocks[s.bi];
+  if(!b) return;
+  if(s.start < s.end){
+    b.spans.push({start: s.start, end: s.end, cid: cid, instruct: ''});
+  } else {
+    b.cid = cid;
+  }
+  hideReadMenu();
+  readRender();
+}
+
+function readAskInstruct(){
+  const s = READ.sel;
+  if(!s) return;
+  const b = READ.blocks[s.bi];
+  if(!b) return;
+  const quote = document.getElementById('readQuote');
+  quote.textContent = s.start < s.end
+    ? ('「' + b.text.slice(s.start, s.end) + '」')
+    : ('整段：' + b.text.slice(0, 36) + (b.text.length > 36 ? '…' : ''));
+  const ta = document.getElementById('readIns');
+  ta.value = '';
+  document.getElementById('readMask').classList.remove('hidden');
+  hideReadMenu();
+  setTimeout(()=>ta.focus(), 30);
+}
+
+function readInsClose(ok){
+  document.getElementById('readMask').classList.add('hidden');
+  if(!ok) return;
+  const s = READ.sel;
+  if(!s) return;
+  const b = READ.blocks[s.bi];
+  if(!b) return;
+  const txt = document.getElementById('readIns').value.trim();
+  if(!txt) return;
+  if(s.start < s.end){
+    b.spans.push({start: s.start, end: s.end, cid: null, instruct: txt});
+  } else {
+    b.instruct = txt;
+  }
+  readRender();
+}
+
+function readInsertMenu(){
+  const html = `<div class="chd">停顿</div>
+    <div class="ci" onclick="readPause(0.5)">短 · 0.5 秒</div>
+    <div class="ci" onclick="readPause(1)">中 · 1 秒</div>
+    <div class="ci" onclick="readPause(2)">长 · 2 秒</div>
+    <div class="ci" onclick="readPauseCustom()">自己填秒数…</div>
+    <div class="cisep"></div>
+    <div class="chd">声音</div>
+    <div class="ci" onclick="readInsertTag('（笑）')">笑声</div>
+    <div class="ci" onclick="readInsertTag('（叹气）')">叹气</div>
+    <div class="ci" onclick="readInsertTag('（倒吸一口气）')">倒吸气</div>
+    <div class="cisep"></div>
+    <div class="ci" onclick="readBack()">← 返回</div>`;
+  setReadMenu(html);
+}
+
+function readPause(sec){
+  const s = READ.sel;
+  if(!s) return;
+  const b = READ.blocks[s.bi];
+  if(!b) return;
+  b.pauses.push({at: s.start, sec: sec});
+  hideReadMenu();
+  readRender();
+}
+
+function readPauseCustom(){
+  const v = prompt('停几秒？（0.2 – 30）', '1.5');
+  if(v === null) return;
+  const n = parseFloat(v);
+  if(!isFinite(n) || n <= 0) return;
+  readPause(Math.min(30, n));
+}
+
+function readInsertTag(tag){
+  const s = READ.sel;
+  if(!s) return;
+  const b = READ.blocks[s.bi];
+  if(!b) return;
+  readSplice(b, s.start === s.end ? s.start : s.end, tag);
+  hideReadMenu();
+  readRender();
+}
+
+async function readGenerate(){
+  const msg = document.getElementById('readMsg');
+  if(!READ.blocks.length){ msg.textContent = '先在编辑框里写一段，点「投递」'; return; }
+  const btn = document.getElementById('readGo');
+  btn.disabled = true;
+  msg.textContent = '';
+  const prog = document.getElementById('readProg');
+  prog.style.display = 'block';
+  document.getElementById('readFill').style.width = '0%';
+  document.getElementById('readPmsg').textContent = '正在排……';
+  try{
+    const narr = document.getElementById('readNarr').value;
+    const r = await fetch('/api/read/generate', {method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({voice: narr, blocks: READ.blocks})});
+    const d = await r.json();
+    if(d.error) throw new Error(d.error);
+    READ.tid = d.tid;
+    readPoll();
+  }catch(e){
+    msg.textContent = '出错了：' + e.message;
+    btn.disabled = false;
+    prog.style.display = 'none';
+  }
+}
+
+function readPoll(){
+  clearInterval(READ.timer);
+  READ.timer = setInterval(async ()=>{
+    let d;
+    try{ d = await (await fetch('/api/read/task/' + READ.tid)).json(); }catch(e){ return; }
+    const fill = document.getElementById('readFill');
+    const pmsg = document.getElementById('readPmsg');
+    if(d.state === 'done'){
+      clearInterval(READ.timer);
+      fill.style.width = '100%';
+      pmsg.textContent = '好了：' + (d.secs || '?') + ' 秒';
+      const a = document.getElementById('readAudio');
+      a.src = d.url + '?t=' + Date.now();
+      a.classList.remove('hidden');
+      const dl = document.getElementById('readDownload');
+      dl.href = d.url;
+      dl.classList.remove('hidden');
+      document.getElementById('readGo').disabled = false;
+    } else if(d.state === 'error'){
+      clearInterval(READ.timer);
+      pmsg.textContent = '';
+      document.getElementById('readMsg').textContent = '失败了：' + (d.error || '');
+      document.getElementById('readGo').disabled = false;
+      document.getElementById('readProg').style.display = 'none';
+    } else if(d.total){
+      const p = Math.round((d.done / Math.max(1, d.total)) * 100);
+      fill.style.width = p + '%';
+      pmsg.textContent = `正在念：${d.done} / ${d.total}`;
+    } else {
+      pmsg.textContent = '正在起头……';
+    }
+  }, 700);
+}
+
+/* ---------- 输出设备（播放走哪个声卡） ---------- */
+async function listOuts(){
+  const sel = document.getElementById('outSel');
+  if(!sel) return;
+  try{
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const outs = devs.filter(d=>d.kind === 'audiooutput');
+    if(!outs.length) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">系统默认输出</option>' +
+      outs.map((d,i)=>`<option value="${d.deviceId}">${esc(d.label || ('输出 ' + (i+1)))}</option>`).join('');
+    if(cur) sel.value = cur;
+  }catch(e){
+    const m = document.getElementById('outMsg');
+    if(m) m.textContent = '这个浏览器读不到输出设备';
+  }
+}
+
+async function applySink(a){
+  const sel = document.getElementById('outSel');
+  const id = sel ? sel.value : '';
+  if(!id || !a.setSinkId) return a;
+  try{
+    await a.setSinkId(id);
+  }catch(e){
+    const m = document.getElementById('outMsg');
+    if(m) m.textContent = '这个浏览器不让切换输出（Chrome 可以）';
+  }
+  return a;
+}
+
+function stopRec(){
+  if(REC.timer){ clearInterval(REC.timer); REC.timer = null; }
+  if(REC.mr){ try{ REC.mr.stop(); }catch(e){} }
+}
+
+function bitBeep(freq, dur){
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!window.__ac) window.__ac = new AC();
+    const ac = window.__ac;
+    if(ac.state === 'suspended') ac.resume();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'square';                       // 方波 = 八位机的味道
+    o.frequency.value = freq;
+    const t = ac.currentTime;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.22, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(ac.destination);
+    o.start(t); o.stop(t + dur + 0.02);
+  }catch(e){}
+}
+
+async function countIn(){
+  const notes = [261.63, 261.63, 261.63, 523.25];   // C4 C4 C4 C5
+  const labels = ['3', '2', '1', '0'];
+  const msg = document.getElementById('cloneMsg');
+  for(let i=0; i<4; i++){
+    bitBeep(notes[i], 0.10);
+    msg.textContent = labels[i] + (i === 3 ? ' —— 开口' : '，准备…');
+    if(i < 3) await new Promise(r=>setTimeout(r, 1000));
+  }
+}
+
+async function toggleRec(){
+  const btn = document.getElementById('recBtn');
+  const msg = document.getElementById('cloneMsg');
+  if(REC.mr){ stopRec(); return; }
+  const id = document.getElementById('micSel').value;
+  const constraints = {audio: id ? {deviceId:{exact:id}, echoCancellation:true, noiseSuppression:true} : true};
+  // ★ 2026-10-30：这三个地方以前出错都是「静默」，用户只看到没反应。
+  //   现在一律弹出来说清楚。
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder){
+    recFail('这个浏览器录不了音',
+      '当前这个浏览器没有录音功能。<br>请用 <b>Chrome</b> 打开这个地址再试：<br>' +
+      '<b>' + location.origin + '</b>');
+    return;
+  }
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+  }catch(err){
+    msg.textContent = '拿不到麦克风：' + (err.message||'');
+    recFail('拿不到麦克风',
+      '系统没让这个页面用麦克风（' + esc(err.name || err.message || '') + '）。<br>' +
+      '点地址栏左边的图标，把麦克风放开，再点一次「直接录」。');
+    return;
+  }
+  await listMics();                       // 授权以后设备名才显示得出来
+  REC.chunks = [];
+  // ★ 2026-10-30：起跑倒数 3-2-1-0，C4 C4 C4 C5 的八位机「答」声（像老赛车游戏）
+  btn.disabled = true;
+  await countIn();
+  btn.disabled = false;
+  let mr;
+  try{
+    mr = new MediaRecorder(stream);
+  }catch(e){
+    stream.getTracks().forEach(t=>t.stop());
+    recFail('这个浏览器录不了音',
+      '它不支持这个录音格式（' + esc(e.name || e.message || '') + '）。<br>用 <b>Chrome</b> 打开就能录。');
+    return;
+  }
+  REC.mr = mr;
+  mr.ondataavailable = ev => { if(ev.data && ev.data.size) REC.chunks.push(ev.data); };
+  mr.onstop = async () => {
+    try{
+      stream.getTracks().forEach(t=>t.stop());
+      stopMeter();
+      REC.mr = null;
+      btn.textContent = '● 直接录（最多 10 秒）';
+      const secs = (Date.now() - REC.t0) / 1000;
+      const ext = (mr.mimeType||'').indexOf('mp4') >= 0 ? '.m4a' : '.webm';
+      const blob = new Blob(REC.chunks, {type: mr.mimeType || 'audio/webm'});
+      if(!blob.size){
+        recFail('这段没录上', '浏览器给的是空音频 —— 多半是麦克风没出声。看一眼电平表有没有绿格，再点「重录」。');
+        return;
+      }
+      msg.textContent = `录了 ${secs.toFixed(1)} 秒，正在转…`;
+      const up = await uploadBlob(blob, 'rec' + ext, {quiet: true,
+        onFail: why => recFail('这段没转成', '服务器转换失败：' + esc(why) + '<br>再录一次，或者换个格式试试。')});
+      if(!up){ return; }
+      recReviewShow(up);
+    }catch(e){
+      recFail('录完出错了', '原因：' + esc(e.message || String(e)) + '<br>再点一次「直接录」试试。');
+    }
+  };
+  mr.start();
+  startMeter(stream);
+  REC.t0 = Date.now();
+  btn.textContent = '■ 停（录音中）';
+  REC.timer = setInterval(()=>{
+    const s = (Date.now() - REC.t0) / 1000;
+    msg.textContent = `录音中… ${s.toFixed(1)} / ${REC_MAX} 秒`;
+    if(s >= REC_MAX) stopRec();           // 到 10 秒自己停
+  }, 100);
+}
+
+async function clonePreview(){
+  if(!CLONE.ref) return;
+  const btn = document.getElementById('clonePrevBtn');
+  btn.disabled = true;
+  document.getElementById('cloneMsg').textContent = '';
+  const txt = (document.getElementById('cloneTestText').value || '').trim();
+  // 进度条：一句大约十几秒，先按时间往前走，别让人对着按钮干等
+  cloneProg(true, '正在念…（一句大约十几秒）', 4);
+  const t0 = Date.now();
+  const timer = setInterval(()=>{
+    const sec = (Date.now() - t0) / 1000;
+    cloneProg(true, '正在念…（第 ' + sec.toFixed(0) + ' 秒）', Math.min(92, 6 + sec * 6));
+  }, 400);
+  let res, d = {};
+  try{
+    res = await fetch('/api/clone/preview',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ref:CLONE.ref, text:txt,
+                          dialect:(document.getElementById('cloneDialect')||{}).value || ''})});
+    d = await res.json();
+  }catch(e){
+    clearInterval(timer);
+    cloneProg(true, '连不上了：' + (e.message || e), 0);
+    btn.disabled = false;
+    return;
+  }
+  clearInterval(timer);
+  btn.disabled = false;
+  if(!res.ok){ cloneProg(true, d.error || '生不出来', 0);
+               document.getElementById('cloneMsg').textContent = d.error || '生不出来'; return; }
+  cloneProg(true, '好了', 100);
+  const a = document.getElementById('clonePrev');
+  a.classList.remove('hidden');
+  a.src = d.url + '?t=' + Date.now();
+  await applySink(a);
+  a.play();
+  document.getElementById('cloneSaveBtn').disabled = false;
+  document.getElementById('cloneMsg').textContent = '听听像不像你。像，就点右边那个按钮。';
+  setTimeout(()=>cloneProg(false), 2500);     // 听完提示就收掉
+}
+
+async function cloneSave(){
+  if(!CLONE.ref) return null;
+  const name = document.getElementById('cloneName').value || '我的声音';
+  const res = await fetch('/api/clone/save',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ref:CLONE.ref, name, engine:CLONE.engine || 'voxcpm'})});
+  const d = await res.json();
+  if(!res.ok){ alert(d.error || '存不了'); return null; }
+  document.getElementById('cloneMsg').textContent =
+    '存好了：' + d.card.id + ' 号 · ' + d.card.name;
+  loadChars();
+  return d.card;
+}
+
+/* 切换这个声音用谁念（2026-10-30：抓来的怪声音默认用大户） */
+async function setEngine(cid, eng){
+  const r = await fetch(`/api/characters/${cid}/engine`,{method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({engine:eng})});
+  const d = await r.json();
+  if(!r.ok){ alert(d.error || '改不了'); return; }
+  const name = eng==='indextts' ? '大户' : (eng==='qwen' ? '千问' : '本机');
+  document.getElementById('cloneMsg').textContent =
+    cid + ' 号以后用「' + name + '」念' +
+    (eng==='indextts' ? '（第一次点念一句会现叫醒它，约两分钟）' :
+     (eng==='qwen' ? '（千问常驻服务在 3910）' : ''));
+}
+
+/* 一次看九种，挑一个用（纯词表替换，离线、快、不改意思） */
+async function toDialect(){
+  const inp = document.getElementById('cloneTestText');
+  const txt = (inp.value || '').trim();
+  if(!txt){ alert('先在右边写一句普通话'); return; }
+  busyStart(3);
+  let d = {};
+  try{
+    d = await (await fetch('/api/dialect/all',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:txt})})).json();
+  }catch(e){ busyDone(); alert('转不了：' + (e.message || e)); return; }
+  busyDone();
+  const items = d.items || [];
+  document.getElementById('dialectSrc').textContent = '原句：' + txt;
+  document.getElementById('dialectList').innerHTML = items.map(it => {
+    const enc = encodeURIComponent(it.text);
+    return `<div class="drow">
+      <span class="dn">${esc(it.short)}</span>
+      <span class="dt">${esc(it.text)}</span>
+      <span style="flex:none;color:#7a7a84;font-size:12.5px">${it.count ? it.count + ' 处' : '没换'}</span>
+      <button class="go" onclick="useDialect('${it.name}','${enc}')">用这个</button>
+    </div>`;
+  }).join('') || '<div class="drow">没有可换的词</div>';
+  document.getElementById('dialectModal').classList.remove('hidden');
+}
+
+function useDialect(name, encText){
+  const txt = decodeURIComponent(encText);
+  document.getElementById('cloneTestText').value = txt;
+  const sel = document.getElementById('cloneDialect');
+  if(sel) sel.value = name;
+  document.getElementById('dialectModal').classList.add('hidden');
+  const msg = document.getElementById('cloneMsg');
+  if(msg) msg.textContent = '已填成' + name + '，不对的地方直接改，改完点「生成一句听听」。';
+}
+
+/* 旧的单方言转换（还留着，别处可能用） */
+async function toDialectOne(){
+  const sel = document.getElementById('cloneDialect');
+  const inp = document.getElementById('cloneTestText');
+  const dialect = (sel || {}).value || '';
+  if(!dialect){ alert('先在左边选一个方言'); return; }
+  const txt = (inp.value || '').trim();
+  if(!txt){ alert('先在右边写一句普通话'); return; }
+  try{
+    const d = await (await fetch('/api/dialect/convert',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:txt, dialect})})).json();
+    inp.value = d.text || txt;
+    const msg = document.getElementById('cloneMsg');
+    if(msg) msg.textContent = '转成了' + dialect +
+      (d.count ? '（换了 ' + d.count + ' 处：' + (d.hits || []).slice(0,4).join('、') + '）' : '（没找到可换的词）') +
+      '　不对的地方你直接改';
+  }catch(e){
+    alert('转不了：' + (e.message || e));
+  }
+}
+
+function cloneProg(show, text, pct){
+  const box = document.getElementById('cloneProgBox');
+  if(!box) return;
+  box.style.display = show ? 'block' : 'none';
+  if(pct != null) document.getElementById('cloneFill').style.width =
+    Math.max(0, Math.min(100, pct)) + '%';
+  document.getElementById('clonePmsg').textContent = text || '';
+}
+
+/* ---------- 情绪试音（拉杆 + 一句话，音色与情绪分开） ---------- */
+const EMO_CN = {happy:'高兴', angry:'生气', sad:'难过', afraid:'害怕',
+                disgusted:'厌恶', melancholic:'忧郁', surprised:'惊讶', calm:'平静'};
+let LABHIST = [];
+
+function labBuildSliders(){
+  const el = document.getElementById('labSliders');
+  if(!el || el.dataset.built) return;
+  el.dataset.built = '1';
+  el.innerHTML = Object.entries(EMO_CN).map(([k,cn])=>`
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="width:37px;font-size:13.5px;color:#c9c9d2">${cn}</span>
+      <input type="range" min="0" max="1.2" step="0.05" value="0" data-emo="${k}"
+             style="flex:1;accent-color:#8fd6ff"
+             oninput="this.nextElementSibling.textContent=(+this.value).toFixed(2)">
+      <span style="width:32px;text-align:right;font-size:12px;color:#8a8a94">0.00</span>
+    </div>`).join('');
+}
+
+/* 试音台的两个下拉，和克隆库是同一份数据：这里只负责把 CHARS 画出来 */
+function syncLabRefs(){
+  const sel = document.getElementById('labRef');
+  const esel = document.getElementById('labEmoRef');
+  if(!sel) return;
+  const opts = (CHARS || []).map(c=>`<option value="characters/${esc(c.ref)}">${c.id} 号 · ${esc(c.name||'没名字')}</option>`).join('');
+  const keep = sel.value;
+  sel.innerHTML = opts || '<option value="">（角色库是空的：先去「声音克隆」存一个，或从视频抓一段）</option>';
+  if(opts && keep && [...sel.options].some(o=>o.value===keep)) sel.value = keep;
+  if(esel){
+    const keep2 = esel.value;
+    esel.innerHTML = '<option value="">（不用，改用下面滑杆/一句话）</option>' + opts;
+    if(opts && keep2 && [...esel.options].some(o=>o.value===keep2)) esel.value = keep2;
+  }
+  labSyncEmoMode();
+}
+
+async function labLoadRefs(){
+  const msg = document.getElementById('labMsg');
+  try{
+    CHARS = await (await fetch('/api/characters')).json();
+    syncLabRefs();
+  }catch(e){ msg.textContent = '读不到角色库'; }
+  try{
+    const h = await (await fetch('/api/theater/health')).json();
+    // 引擎状态上面那条已经写了，这里别再重复一遍
+    const st = document.getElementById('labEngineState');
+    if(st && h.ready) st.textContent = '引擎就绪';
+    msg.textContent = '';
+  }catch(e){ msg.textContent = 'IndexTTS 服务连不上'; }
+}
+
+/* 情绪只能有一个来源：情绪参考音 / 滑杆 / 一句话。选了参考音，其余就灰掉。 */
+function labSyncEmoMode(){
+  const useRef = !!(document.getElementById('labEmoRef') || {}).value;
+  document.querySelectorAll('#labSliders input[type=range]').forEach(i=>{
+    i.disabled = useRef; i.style.opacity = useRef ? .35 : 1;
+  });
+  const t = document.getElementById('labEmoText');
+  t.disabled = useRef;
+  t.style.opacity = useRef ? .35 : 1;
+  if(useRef) t.placeholder = '已用情绪参考音（这一段只借语气，音色还是上面那位）';
+  else t.placeholder = '或者一句话描述情绪（填了就盖掉上面滑杆）';
+}
+
+function labReset(){
+  document.querySelectorAll('#labSliders input[type=range]').forEach(i=>{
+    i.value = 0; i.nextElementSibling.textContent = '0.00';
+  });
+  document.getElementById('labEmoText').value = '';
+}
+
+/* 打开情绪测试：把那个 24G 的引擎慢慢拉起来，进度条一路走 */
+let LAB_BOOTING = false;
+async function labStartEngine(){
+  const st = document.getElementById('labEngineState');
+  const btn = document.getElementById('labBootBtn');
+  if(LAB_BOOTING) return;
+  LAB_BOOTING = true;
+  btn.disabled = true;
+  btn.textContent = '正在叫醒…';
+  labProg(true, '正在叫醒引擎…（24G 的大模型，第一次要两分钟左右）', 6);
+  try{
+    const r = await fetch('/api/theater/start', {method:'POST'});
+    if(r.status === 404){
+      labProg(true, '主服务还没换成新版本 —— 要重启一次 VoiceCaster 才行', 0);
+      btn.disabled = false; btn.textContent = '▶ 打开情绪测试'; LAB_BOOTING = false;
+      return;
+    }
+  }catch(e){}
+  const t0 = Date.now();
+  let ok = false;
+  for(let i = 0; i < 150; i++){          // 最多等 5 分钟
+    await new Promise(r2 => setTimeout(r2, 2000));
+    let h = {};
+    try{ h = await (await fetch('/api/theater/health')).json(); }catch(e){ h = {}; }
+    const sec = Math.round((Date.now() - t0) / 1000);
+    if(h.ready){
+      ok = true;
+      labProg(true, '引擎好了，可以试了（用了 ' + sec + ' 秒）', 100);
+      st.textContent = '引擎就绪';
+      document.getElementById('labStopBtn').classList.remove('hidden');
+      setTimeout(()=>labProg(false), 4000);
+      break;
+    }
+    const pct = Math.min(95, 8 + sec * 0.9);
+    labProg(true, (h.msg ? '预热中：' + h.msg + '　' : '预热中…') + '（已等 ' + sec + ' 秒）', pct);
+  }
+  if(!ok){
+    labProg(true, '等太久了，可能没起来 —— 看 /tmp/indextts.log 最后几行', 0);
+    st.textContent = '引擎没起来';
+  }
+  btn.disabled = false;
+  btn.textContent = '▶ 打开情绪测试';
+  LAB_BOOTING = false;
+}
+
+async function labStopEngine(){
+  try{ await fetch('/api/theater/stop', {method:'POST'}); }catch(e){}
+  labProg(false);
+  document.getElementById('labEngineState').textContent = '引擎关了';
+  document.getElementById('labStopBtn').classList.add('hidden');
+}
+
+function labProg(show, text, pct){
+  const box = document.getElementById('labProg');
+  if(!box) return;
+  box.style.display = show ? 'block' : 'none';
+  if(pct != null) document.getElementById('labFill').style.width =
+    Math.max(0, Math.min(100, pct)) + '%';
+  document.getElementById('labPmsg').textContent = text || '';
+}
+
+async function labSay(){
+  const ref = document.getElementById('labRef').value;
+  const text = (document.getElementById('labText').value || '').trim();
+  const emoTxt = (document.getElementById('labEmoText').value || '').trim();
+  const emoRef = document.getElementById('labEmoRef').value;
+  const msg = document.getElementById('labMsg');
+  if(!ref){ msg.textContent = '先选一个声音（或去声音克隆存一个）'; return; }
+  if(!text){ msg.textContent = '写一句要念的话'; return; }
+  const vals = [...document.querySelectorAll('#labSliders input[type=range]')]
+    .map(i=>[i.dataset.emo, parseFloat(i.value)]).filter(([k,v])=>v>0.01);
+  const emotion = vals.map(([k,v])=>k+':'+v).join(',');
+  const btn = document.getElementById('labGo');
+  btn.disabled = true;
+  msg.textContent = '';
+  try{
+    // ① 先叫醒引擎（它平时不占内存，闲置 20 分钟会自己退）
+    labProg(true, '正在叫醒引擎…（24G 的大模型，第一次要等两分钟左右）', 8);
+    try{ await fetch('/api/theater/start', {method:'POST'}); }catch(e){}
+    labProg(true, '预热中…（第一次要等两分钟左右）', 12);
+    let h = {};
+    try{ h = await (await fetch('/api/theater/health')).json(); }catch(e){ h = {}; }
+    if(!h.ready){
+      for(let i=0;i<90;i++){
+        await new Promise(r=>setTimeout(r, 2000));
+        try{ h = await (await fetch('/api/theater/health')).json(); }catch(e){ h = {}; }
+        if(h.ready) break;
+        labProg(true, '预热中…（已等 ' + ((i+1)*2) + ' 秒）', Math.min(88, 12 + (i+1)*3));
+      }
+      if(!h.ready){ labProg(true, '引擎还是没热起来（' + (h.msg||'') + '）', 0); return; }
+    }
+
+    // ② 排演中：单句大约 6–10 秒，按估算往前走，不假装精确
+    labProg(true, '排演中…（大约 6–10 秒）', 45);
+    const t0 = Date.now();
+    const timer = setInterval(()=>{
+      const s = (Date.now() - t0) / 1000;
+      labProg(true, '排演中…（第 ' + s.toFixed(0) + ' 秒）', Math.min(92, 45 + s*4));
+    }, 500);
+
+    const res = await fetch('/api/theater/say',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text, ref, lang:'zh', emotion, emotion_text: emoTxt,
+                           emotion_ref: emoRef, emo_alpha: 1.0})});
+    clearInterval(timer);
+    const d = await res.json();
+    if(!res.ok){ labProg(true, '出错了：' + (d.error || '生成失败'), 0); return; }
+
+    // ③ 已完成
+    labProg(true, '已完成：' + d.seconds + ' 秒（等了 ' + d.elapsed + ' 秒）', 100);
+    const a = document.getElementById('labAudio');
+    a.classList.remove('hidden');
+    a.src = d.url + '?t=' + Date.now();
+    await applySink(a);
+    a.play();
+    labHistAdd(text, emoRef ? ('情绪参考 ' + emoRef.split('/').pop()) : (emoTxt || (vals.length ? emotion : '没加情绪')), d.url, d.file);
+  }catch(e){
+    labProg(true, '出错了：' + e, 0);
+  }finally{ btn.disabled = false; }
+}
+
+function labHistAdd(text, emo, url, file){
+  LABHIST.unshift({text, emo, url, file});
+  const el = document.getElementById('labHist');
+  el.innerHTML = LABHIST.slice(0,8).map((h,i)=>`
+    <div style="display:flex;gap:8px;align-items:center;padding:7px 2px;border-top:1px solid rgba(255,255,255,.06)">
+      <button onclick="labPlayHist(${i})" style="padding:4px 10px;font-size:13px">▶</button>
+      <span style="font-size:13px;color:#d5d5dc;flex:1">${esc(h.text)}</span>
+      <span style="font-size:12px;color:#8a8a94">${esc(h.emo)}</span>
+      <button onclick="labKeep(${i})" style="padding:4px 10px;font-size:12.5px">留下这条</button>
+    </div>`).join('');
+}
+
+async function labKeep(i){
+  const h = LABHIST[i];
+  if(!h || !h.file) return;
+  try{
+    const res = await fetch('/api/theater/keep',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({file: h.file, text: h.text, emotion: h.emo})});
+    const d = await res.json();
+    if(!res.ok){ labProg(true, d.error || '存不了', 0); return; }
+    labProg(true, '留下了：' + d.name + '（一共 ' + d.count + ' 条）', 100);
+    // 用户 2026-10-30：点完就跳到成品那边，别让它在历史里悄悄消失
+    await labLoadKept(d.name);
+    const box = document.getElementById('labKept');
+    if(box) box.scrollIntoView({behavior:'smooth', block:'center'});
+  }catch(e){ labProg(true, '存不了：' + e, 0); }
+}
+
+async function labLoadKept(hl){
+  const el = document.getElementById('labKept');
+  if(!el) return;
+  try{
+    const d = await (await fetch('/api/theater/keep')).json();
+    const items = d.items || [];
+    el.innerHTML = items.length ? items.map(it=>`
+      <div class="row" style="grid-template-columns:1fr auto;${it.name===hl?'background:rgba(143,214,255,.10)':''}">
+        <div style="font-size:13.5px;word-break:break-all">${esc(it.name)}</div>
+        <div style="display:flex;gap:6px">
+          <button onclick="labPlayUrl('${it.url}')" style="padding:4px 10px;font-size:13px">▶ 听</button>
+          <button onclick="sendTo('live','${esc(it.name)}',this)" style="padding:4px 10px;font-size:13px"
+                  title="送进 Ableton Live 的编曲视图">→ Live</button>
+          <button onclick="sendTo('ace','${esc(it.name)}',this)" style="padding:4px 10px;font-size:13px"
+                  title="送进 ACE Studio（按原速放在时间轴上）">→ ACE</button>
+          <button onclick="sendTo('cubase','${esc(it.name)}',this)" style="padding:4px 10px;font-size:13px"
+                  title="放进 Cubase 收件箱（在 MediaBay 里拖出来用）">→ Cubase</button>
+        </div>
+      </div>`).join('') : '<div class="row"><div class="no"></div><div style="color:#999">还没有留下过</div></div>';
+  }catch(e){}
+}
+
+async function sendTo(which, file, btn){
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
+  try{
+    const res = await fetch('/api/send/' + which, {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({file})});
+    const d = await res.json();
+    if(res.ok){
+      btn.textContent = '✓';
+      if(which === 'cubase'){
+        labProg(true, '已放进 Cubase 收件箱：' + (d.folder || '') +
+          ' —— 在 Cubase 的 MediaBay 里收藏这个文件夹，拖一下就能用', 100);
+      }else{
+        labProg(true, '已送进 ' + (which === 'live' ? 'Live' : 'ACE Studio') + (d.out ? '（' + d.out + '）' : ''), 100);
+      }
+    }else{
+      btn.textContent = '✗';
+      labProg(true, d.error || '没送进去', 0);
+    }
+  }catch(e){
+    btn.textContent = '✗';
+    labProg(true, '没送进去：' + e, 0);
+  }finally{
+    setTimeout(()=>{ btn.textContent = old; btn.disabled = false; }, 2500);
+  }
+}
+
+function labPlayUrl(u){
+  const a = document.getElementById('labAudio');
+  a.classList.remove('hidden');
+  a.src = u + '?t=' + Date.now();
+  applySink(a).then(()=>a.play());
+}
+
+function labPlayHist(i){
+  const a = document.getElementById('labAudio');
+  a.classList.remove('hidden');
+  a.src = LABHIST[i].url + '?t=' + Date.now();
+  applySink(a).then(()=>a.play());
+}
+
+/* ---------- 从视频网页抓一段声音 ---------- */
+let SEGREF = null;
+let WAVE = {buf:null, dur:0, a:0, b:18, drag:null};
+
+function _fmtT(t){
+  t = Math.max(0, t||0);
+  const m = Math.floor(t/60), s = t - m*60;
+  return (m<10?'0':'')+m+':'+(s<10?'0':'')+s.toFixed(1);
+}
+
+async function loadWave(url, startAt){
+  try{
+    const ab = await (await fetch(url + '?t=' + Date.now())).arrayBuffer();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ac = new AC();
+    const buf = await ac.decodeAudioData(ab);
+    WAVE.buf = buf; WAVE.dur = buf.duration;
+    if(ac.close) ac.close();
+  }catch(e){
+    WAVE.buf = null; WAVE.dur = 0;
+  }
+  const d = WAVE.dur || 0;
+  const s = Math.min(Math.max(0, startAt||0), Math.max(0, d-2));
+  WAVE.a = s;
+  WAVE.b = Math.min(d || 18, s + (d ? Math.min(18, d - s) : 18));
+  drawWave();
+}
+
+function _rr(g, x, y, w, h, r){
+  g.beginPath();
+  g.moveTo(x+r, y); g.lineTo(x+w-r, y); g.quadraticCurveTo(x+w, y, x+w, y+r);
+  g.lineTo(x+w, y+h-r); g.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  g.lineTo(x+r, y+h); g.quadraticCurveTo(x, y+h, x, y+h-r);
+  g.lineTo(x, y+r); g.quadraticCurveTo(x, y, x+r, y); g.closePath();
+}
+
+function drawWave(){
+  const cv = document.getElementById('waveCanvas');
+  if(!cv) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || 600, H = cv.clientHeight || 78;
+  cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr);
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const mid = H/2;
+  const data = WAVE.buf ? WAVE.buf.getChannelData(0) : null;
+  const n = data ? data.length : 0;
+  g.fillStyle = 'rgba(140,215,255,.55)';
+  if(n){
+    const step = Math.max(1, Math.floor(n / W));
+    for(let x=0; x<W; x++){
+      let mn = 1, mx = -1;
+      const s0 = x*step, s1 = Math.min(n, s0+step);
+      for(let i=s0; i<s1; i+=4){ const v = data[i]; if(v<mn) mn=v; if(v>mx) mx=v; }
+      if(mx < mn) continue;
+      const y1 = mid + mn*mid*0.92, y2 = mid + mx*mid*0.92;
+      g.fillRect(x, y1, 1, Math.max(1, y2-y1));
+    }
+  }
+  if(!WAVE.dur) return;
+  const xa = WAVE.a / WAVE.dur * W, xb = WAVE.b / WAVE.dur * W;
+  g.fillStyle = 'rgba(8,10,16,.62)';
+  g.fillRect(0, 0, xa, H); g.fillRect(xb, 0, W-xb, H);
+  g.strokeStyle = '#fff'; g.lineWidth = 2;
+  _rr(g, xa+1, 3, Math.max(2, xb-xa-2), H-6, 10); g.stroke();
+  g.fillStyle = '#fff';
+  [[xa, 1], [xb, -1]].forEach(([x, side])=>{
+    _rr(g, x - (side>0?5:1), 12, 6, H-24, 3); g.fill();
+  });
+  // 播放头：听这段的时候跟着走，眼睛有个着落
+  if(WAVE.head != null){
+    const xh = Math.max(0, Math.min(W, WAVE.head / WAVE.dur * W));
+    g.fillStyle = 'rgba(255,154,60,.95)';
+    g.fillRect(xh - 1, 0, 2.5, H);
+    g.beginPath();
+    g.arc(xh, 3, 4, 0, Math.PI * 2); g.fill();
+  }
+  const info = document.getElementById('cutInfo');
+  if(info) info.textContent = '已选 ' + (WAVE.b - WAVE.a).toFixed(1) + ' 秒（' +
+    _fmtT(WAVE.a) + ' → ' + _fmtT(WAVE.b) + '）';
+}
+
+function waveTime(ev){
+  const cv = document.getElementById('waveCanvas');
+  const r = cv.getBoundingClientRect();
+  return Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)) * WAVE.dur;
+}
+
+function waveHit(ev){
+  // ★ 2026-10-30：热区按「屏幕像素」算，不再按总时长的 2%。
+  //   以前 13 分钟的音频容差有 16 秒，比白框还宽 —— 点哪儿都被当成拖手柄，
+  //   结果「点一下就重新定位」根本不生效。
+  const cv = document.getElementById('waveCanvas');
+  const r = cv.getBoundingClientRect();
+  const W = r.width || 1;
+  const px = ev.clientX - r.left;
+  const xa = WAVE.a / WAVE.dur * W, xb = WAVE.b / WAVE.dur * W;
+  const tol = 14;                                  // 手柄左右各 14 像素
+  if(Math.abs(px - xa) <= tol) return 'a';
+  if(Math.abs(px - xb) <= tol) return 'b';
+  if(px > xa && px < xb) return 'both';            // 框内：整体挪动
+  return 'new';                                    // 框外：重新定位
+}
+
+function waveDown(ev){
+  if(!WAVE.dur) return;
+  const mode = waveHit(ev);
+  if(mode === 'new'){
+    // 点哪儿，左边就到哪儿；右边一直是「点的地方 + 15 秒」
+    const t = waveTime(ev);
+    const d = WAVE.dur;
+    let a0 = Math.max(0, Math.min(t, d - 1));
+    let b0 = Math.min(d, a0 + 15);
+    if(b0 - a0 < 4) a0 = Math.max(0, b0 - 4);
+    WAVE.a = a0; WAVE.b = b0;
+    drawWave();
+    return;
+  }
+  WAVE.drag = {mode, t0: waveTime(ev), a0: WAVE.a, b0: WAVE.b};
+  document.getElementById('waveCanvas').setPointerCapture(ev.pointerId);
+  waveMove(ev);
+}
+
+function waveMove(ev){
+  if(!WAVE.drag) return;
+  const t = waveTime(ev);
+  // 2026-10-30 用户定：起点随便放，但白框最长就是 15 秒 —— 拉到头就拖不动，手滑也不会拖成两分钟
+  const d = WAVE.dur, MIN = 4, MAX = 15;
+  const {mode, t0, a0, b0} = WAVE.drag;
+  if(mode === 'a'){
+    WAVE.a = Math.min(Math.max(0, t), WAVE.b - MIN);
+  }else if(mode === 'b'){
+    WAVE.b = Math.max(Math.min(d, t), WAVE.a + MIN);
+  }else{
+    const dt = t - t0, len = b0 - a0;
+    let a = a0 + dt, b = b0 + dt;
+    if(a < 0){ a = 0; b = len; }
+    if(b > d){ b = d; a = Math.max(0, d - len); }
+    WAVE.a = a; WAVE.b = b;
+  }
+  if(WAVE.b - WAVE.a > MAX){
+    if(mode === 'a') WAVE.a = WAVE.b - MAX;
+    else if(mode === 'b') WAVE.b = WAVE.a + MAX;
+    else { WAVE.a = a0; WAVE.b = b0; }
+  }
+  drawWave();
+}
+
+function waveUp(){ WAVE.drag = null; }
+
+document.getElementById('waveCanvas').addEventListener('pointerdown', waveDown);
+document.getElementById('waveCanvas').addEventListener('pointermove', ev => {
+  if(WAVE.drag) waveMove(ev);
+  else if(WAVE.dur){
+    const m = waveHit(ev);
+    document.getElementById('waveCanvas').style.cursor =
+      (m === 'both') ? 'grab' : (m === 'new' ? 'crosshair' : 'ew-resize');
+  }
+});
+window.addEventListener('pointerup', waveUp);
+window.addEventListener('resize', ()=>{
+  if(WAVE.dur) drawWave();
+});
+
+/* 只放白框里那一段（2026-10-30 用户要：按两头拖的范围试听） */
+let SEGTIMER = null;
+function playSeg(){
+  const a = document.getElementById('urlAudio');
+  const btn = document.getElementById('playSegBtn');
+  const big = document.getElementById('wavePlayBtn');
+  const mark = on => {
+    if(btn) btn.textContent = on ? '■ 停' : '▶ 听这段';
+    if(big) big.textContent = on ? '■' : '▶';
+  };
+  if(!a || !a.src || !WAVE.dur) return;
+  if(SEGTIMER){                      // 再按一下＝停
+    clearInterval(SEGTIMER); SEGTIMER = null;
+    try{ a.pause(); }catch(e){}
+    WAVE.head = null;
+    drawWave();
+    mark(false);
+    return;
+  }
+  const start = WAVE.a;
+  try{ a.currentTime = start; }catch(e){}
+  applySink(a).then(()=>a.play()).catch(()=>a.play());
+  mark(true);
+  WAVE.head = start;
+  drawWave();
+  // 循环听：走到底就回头上再来，只有按「■ 停」才停（2026-10-30 用户要求）
+  SEGTIMER = setInterval(()=>{
+    const a0 = WAVE.a, b0 = Math.min(WAVE.b, WAVE.dur);   // 跟着白框走
+    if(a.currentTime >= b0 || a.currentTime < a0 - 0.05){
+      try{ a.currentTime = a0; }catch(e){}
+    }
+    WAVE.head = a.currentTime;
+    drawWave();
+  }, 100);
+}
+
+async function grabFromUrl(){
+  const inp = document.getElementById('urlIn');
+  const msg = document.getElementById('urlMsg');
+  const btn = document.getElementById('urlGrabBtn');
+  const url = (inp.value || '').trim();
+  if(!url){ msg.textContent = '先粘一个链接'; return; }
+  btn.disabled = true;
+  urlProg(true, '正在问网站要音频…', 2);
+  try{
+    const res = await fetch('/api/clone/from-url',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({url})});
+    const d = await res.json();
+    if(!res.ok){ msg.textContent = d.error || '抓不下来'; urlProg(false); return; }
+    // 一边抓一边看进度（视频长了心里有数）
+    let r = null;
+    for(let i = 0; i < 900; i++){
+      await new Promise(x=>setTimeout(x, 1000));
+      let t = {};
+      try{ t = await (await fetch('/api/clone/from-url/' + d.task)).json(); }catch(e){ t = {}; }
+      if(t.state === 'missing'){ msg.textContent = '任务丢了（服务可能重启过），再抓一次'; urlProg(false); return; }
+      urlProg(true, t.msg || '正在抓…', Math.round((t.pct || 0) * 100));
+      if(t.state === 'error'){ msg.textContent = t.msg || '抓不下来'; urlProg(false); return; }
+      if(t.state === 'done'){ r = t.result; break; }
+    }
+    if(!r){ msg.textContent = '等太久了，换短一点的视频试试'; urlProg(false); return; }
+    urlProg(false);
+    msg.textContent = '抓到了：' + _fmtT(r.seconds) + '。在波形上拖一段只有这人说话的地方。';
+    const a = document.getElementById('urlAudio');
+    a.src = r.url + '?t=' + Date.now();
+    await applySink(a);
+    document.getElementById('urlBox').classList.remove('hidden');
+    document.getElementById('useSegBtn').disabled = true;
+    document.getElementById('segAudio').classList.add('hidden');
+    await loadWave(r.url, r.start);
+  } finally { btn.disabled = false; }
+}
+
+/* 抓取进度条 */
+function urlProg(show, text, pct){
+  const box = document.getElementById('urlProgBox');
+  if(!box) return;
+  box.style.display = show ? 'block' : 'none';
+  if(pct != null) document.getElementById('urlFill').style.width =
+    Math.max(0, Math.min(100, pct)) + '%';
+  document.getElementById('urlPmsg').textContent = text || '';
+}
+
+async function separateVocals(){
+  const msg = document.getElementById('urlMsg');
+  const btn = document.getElementById('sepBtn');
+  if(!SEGREF){ msg.textContent = '先截一段出来，再分离'; return; }
+  btn.disabled = true;
+  urlProg(true, '正在叫人声分离模型（第一次会久一点）…', 4);
+  try{
+    const res = await fetch('/api/clone/separate', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ref: SEGREF})});
+    const d = await res.json();
+    if(!res.ok){ msg.textContent = d.error || '分离不了'; urlProg(false); btn.disabled = false; return; }
+    let r = null;
+    for(let i = 0; i < 600; i++){
+      await new Promise(x=>setTimeout(x, 1000));
+      let t = {};
+      try{ t = await (await fetch('/api/clone/separate/' + d.task)).json(); }catch(e){}
+      if(t.state === 'missing'){ msg.textContent = '任务丢了（服务可能重启过），再点一次'; urlProg(false); btn.disabled = false; return; }
+      urlProg(true, t.msg || '正在分离…', Math.round((t.pct || 0) * 100));
+      if(t.state === 'error'){ msg.textContent = t.msg || '分离失败'; urlProg(false); btn.disabled = false; return; }
+      if(t.state === 'done'){ r = t.result; break; }
+    }
+    urlProg(false);
+    if(!r){ msg.textContent = '等太久了，这一段可能太长'; btn.disabled = false; return; }
+    msg.textContent = '好了：背景没了，只剩人声。听听像不像这个人。';
+    const a = document.getElementById('segAudio');
+    a.classList.remove('hidden');
+    a.src = r.url + '?t=' + Date.now();
+    await applySink(a);
+    const p = a.play(); if(p && p.catch) p.catch(()=>{});
+    SEGREF = r.ref;
+    document.getElementById('useSegBtn').disabled = false;
+    document.getElementById('segSepNote').classList.remove('hidden');
+  }catch(e){
+    msg.textContent = '出错了：' + (e.message || e);
+    urlProg(false);
+  }
+  btn.disabled = false;
+}
+
+function restoreCut(){
+  if(!SEGREF) return;
+  SEGREF = 'cut_48k.wav';
+  const a = document.getElementById('segAudio');
+  if(a){ a.src = '/api/audio/output/clone/cut_48k.wav?t=' + Date.now();
+         const p = a.play(); if(p && p.catch) p.catch(()=>{}); }
+  document.getElementById('segSepNote').classList.add('hidden');
+}
+
+async function cutSegment(){
+  const msg = document.getElementById('urlMsg');
+  busyStart(8);
+  if(!WAVE.dur){ msg.textContent = '先抓一段声音'; return; }
+  // ① 先在框里自动挑「最完整的一段人声」：最长的那段，两段差不多长就取靠前的
+  const want = Math.max(2, WAVE.b - WAVE.a);
+  let start = WAVE.a, len = Math.min(15, want);
+  // 你自己框得准（15 秒以内）就完全按你框的来，不替你自作主张；
+  // 只有框得比 15 秒宽时，才在框里挑一段最完整的。
+  if(want > 15.5){
+  msg.textContent = '正在看框里哪一段最完整…';
+  try{
+    const sg = await (await fetch('/api/clone/auto-seg',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ref:'from_url_48k.wav', start:WAVE.a, length:want})})).json();
+    if(sg && sg.start != null && sg.picked){
+      start = sg.start; len = sg.length;
+      WAVE.a = start; WAVE.b = Math.min(WAVE.dur, start + len);
+      drawWave();
+      msg.textContent = '自动挑了最长的一段（' + len.toFixed(1) + ' 秒，从 ' + _fmtT(start) + ' 起）';
+    }else if(sg && sg.messy){
+      msg.textContent = '框里太零碎（最长的一段才 ' + (sg.found || 0).toFixed(1) +
+        ' 秒），就用开头 15 秒 —— 想更准就框窄一点再试';
+    }
+  }catch(e){}
+  }
+  // ② 再截 —— 不管怎样，截出来最多 15 秒
+  const res = await fetch('/api/clone/cut',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ref:'from_url_48k.wav', start, length:len})});
+  const d = await res.json();
+  busyDone();
+  if(!res.ok){ msg.textContent = d.error || '截不出来'; return; }
+  msg.textContent = '截好了：' + d.seconds + ' 秒 —— 听听这段是不是这个人。';
+  const a = document.getElementById('segAudio');
+  a.classList.remove('hidden');
+  a.src = d.url + '?t=' + Date.now();
+  await applySink(a); a.play();
+  SEGREF = d.ref;
+  document.getElementById('useSegBtn').disabled = false;
+  document.getElementById('sepBtn').disabled = false;
+  document.getElementById('segSepNote').classList.add('hidden');
+}
+
+async function useSegment(){
+  if(!SEGREF) return;
+  CLONE.ref = SEGREF;
+  CLONE.engine = 'indextts';            // 网页抓来的怪声音，默认交给大户（短素材更像）
+  document.getElementById('cloneBox').classList.remove('hidden');
+  const a = document.getElementById('cloneAudio');
+  a.src = '/api/audio/output/clone/' + SEGREF + '?t=' + Date.now();
+  await applySink(a); a.play();
+  document.getElementById('cloneName').value = '视频里抓的声音';
+  document.getElementById('cloneMsg').textContent =
+    '这段就是克隆参考。写一句想听的话，点「生成一句听听」——像，就「就用这个声音」。';
+}
+
+/* ---------- PPT 讲解 ---------- */
+let PPT = {name:null, pages:[], existing:{}};
+
+function esc(s){ return (s||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+/* 2026-10-30：用能「记住文件」的方式打开 —— 做完就能原样写回那一份，
+   不用再问存到哪儿，也不会因为文件名不同变成新课。 */
+let PPT_HANDLE = null;
+
+async function pickPptx(){
+  if(window.showOpenFilePicker){
+    try{
+      const [h] = await window.showOpenFilePicker({
+        types:[{description:'PowerPoint 课件',
+                accept:{'application/vnd.openxmlformats-officedocument.presentationml.presentation':['.pptx']}}],
+        multiple:false});
+      PPT_HANDLE = h;
+      const f = await h.getFile();
+      await loadPptxFile(f);
+      return;
+    }catch(e){
+      if(e && e.name === 'AbortError') return;      // 自己取消了
+      // 别的错就走老路
+    }
+  }
+  document.getElementById('pptxFile').click();
+}
+
+async function loadPptxFile(f){
+  document.getElementById('pptMsg').textContent = '正在读课件…';
+  busyStart(25);
+  const b64 = await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f);});
+  const res = await fetch('/api/ppt/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:f.name.replace(/\.pptx$/i,''), data:b64})});
+  const d = await res.json();
+  busyDone();
+  if(!res.ok){ document.getElementById('pptMsg').textContent='读失败：'+(d.error||res.status); return; }
+  PPT.name = d.name; PPT.pages = d.pages; PPT.existing = d.existing || {};
+  try{ localStorage.setItem('vc_ppt_last', d.name); }catch(e){}
+  refreshPptList();
+  renderPpt();
+  document.getElementById('pptMsg').textContent =
+    '读了 ' + d.pages.length + ' 页；做完全部之后可以直接写回你刚选的这份。';
+}
+
+document.getElementById('pptxFile').onchange = async e => {
+  const f = e.target.files[0]; if(!f) return;
+  PPT_HANDLE = null;                 // 走老路拿不到句柄，保存时还得问
+  await loadPptxFile(f);
+  renderPpt();
+  const canBuild = d.pages.some(p=>p.sentences.length);
+  document.getElementById('pptBuildBtn').disabled = !canBuild;
+  const pb = document.getElementById('pptPatchBtn');
+  if(pb) pb.disabled = !canBuild;
+  document.getElementById('pptMsg').textContent = '读了 ' + d.pages.length + ' 页';
+  e.target.value = '';
+};
+
+function renderPpt(){
+  const el = document.getElementById('pptList');
+  el.innerHTML = PPT.pages.map(function(p){
+    try{ return pptPageHtml(p); }catch(e){
+      return `<div class="row"><div class="no">${p.index}</div>
+        <div style="color:#ff8a76">这一页显示不出来：${esc(e.message || String(e))}</div></div>`;
+    }
+  }).join('');
+  bindSentEdits(el);
+}
+
+function pptPageHtml(p){
+  if(!Array.isArray(p.sentences)) p.sentences = [];
+  return `
+    <div class="row" style="grid-template-columns:44px 1fr;">
+      <div class="no">${p.index}</div>
+      <div>${p.sentences.map((s,i)=>`<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:5px">
+          <div class="said sent-edit" contenteditable="true" data-page="${p.index}" data-idx="${i}"
+            title="这一句可以直接改"
+            style="flex:1;font-size:15px;border-bottom:1px dashed rgba(255,255,255,.14);outline:none">${i+1}. ${esc(s)}</div>
+          <span onclick="delSent(${p.index},${i})" title="删掉这一句"
+                style="color:#ff7f6b;cursor:pointer;font-size:13px;padding:2px 6px">✕</span>
+        </div>`).join('') || '<div style="color:#999">这一页没有文字</div>'}
+      ${p.hits && p.hits.length ? `<div class="tag gray">术语：${p.hits.join('、')}</div>` : ''}
+      <div style="margin-top:6px">${
+        (PPT.existing||{})[String(p.index)]
+          ? (()=>{ const e = PPT.existing[String(p.index)]; const t = '▶ 听这页（' + Math.round(e.seconds) + ' 秒）';
+                   return `<button class="go" style="font-size:14px;padding:7px 16px" onclick="playOne('${e.url}', this, '${t}')">${t}</button>`; })()
+          : `<button disabled style="font-size:14px;padding:7px 16px;opacity:.5" title="这一页还没有声音：点右边「重做这页」就会做出来">还没有声音</button>`
+      }${p.sentences.length ? `<button style="margin-left:8px;font-size:13px;padding:4px 10px" onclick="redoPpt(${p.index})">重做这页</button>` : ''}</div>
+      </div></div>`;
+}
+
+/* 句子可以直接改；离开输入框就写回数据，生成时用改过的 */
+function bindSentEdits(el){
+  el.querySelectorAll('.sent-edit').forEach(sp=>{
+    sp.addEventListener('blur', ()=>{
+      const pg = +sp.dataset.page, i = +sp.dataset.idx;
+      const page = PPT.pages.find(x=>x.index === pg);
+      if(!page) return;
+      const txt = sp.textContent.replace(/^\s*\d+\.\s*/, '').trim();
+      if(txt) page.sentences[i] = txt;
+      sp.textContent = (i + 1) + '. ' + page.sentences[i];
+    });
+    sp.addEventListener('keydown', ev=>{
+      if(ev.key === 'Enter'){ ev.preventDefault(); sp.blur(); }
+    });
+  });
+}
+
+function delSent(pg, i){
+  const page = PPT.pages.find(x => x.index === pg);
+  if(!page) return;
+  page.sentences.splice(i, 1);
+  renderPpt();
+}
+
+/* 连播整册：按页序一页接一页，讲课前从头预听 */
+let PALL = {list:[], idx:0, cur:null};
+
+async function playAllPpt(){
+  const ex = PPT.existing || {};
+  const keys = Object.keys(ex).map(Number).sort((a,b)=>a-b);
+  if(!keys.length){ alert('这一册还没生成音频'); return; }
+  if(PALL.cur){ PALL.cur.pause(); PALL.cur = null; }
+  PALL.list = keys.map(k=>ex[String(k)].url);
+  PALL.idx = 0;
+  await nextAllPpt();
+}
+
+async function nextAllPpt(){
+  if(PALL.idx >= PALL.list.length){
+    PALL.cur = null;
+    document.getElementById('pptPmsg').textContent = '整册放完了';
+    return;
+  }
+  const url = PALL.list[PALL.idx];
+  const n = PALL.idx + 1;
+  PALL.idx++;
+  const a = new Audio(url + '?t=' + Date.now());
+  PALL.cur = a;
+  await applySink(a);
+  a.onended = ()=>{ if(PALL.cur === a) nextAllPpt(); };
+  a.play();
+  document.getElementById('pptPmsg').textContent = `连播 ${n} / ${PALL.list.length}`;
+}
+
+function stopAllPpt(){
+  if(PALL.cur){ PALL.cur.pause(); PALL.cur = null; }
+  PALL.idx = 999999;
+  document.getElementById('pptPmsg').textContent = '连播停了';
+}
+
+async function playPage(url){
+  const a = new Audio(url + '?t=' + Date.now());
+  await applySink(a);
+  a.play();
+}
+
+function pptBundle(){
+  if(!PPT.name){ alert('先导入一份课件'); return; }
+  location.href = '/api/ppt/bundle/' + encodeURIComponent(PPT.name);
+}
+
+async function redoPpt(index){
+  if(!PPT.name) return;
+  const sel = document.getElementById('pptChar');
+  const charId = sel && sel.value ? sel.value : (CHARS[0]?CHARS[0].id:1);
+  document.getElementById('pptProg').style.display = 'block';
+  document.getElementById('pptPmsg').textContent = `重做第 ${index} 页…`;
+  const res = await fetch('/api/ppt/build',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:PPT.name, char:charId, steps:32, only:[index], pages:PPT.pages})});
+  const d = await res.json();
+  if(d.task) pollPpt(d.task);
+  else document.getElementById('pptPmsg').textContent = '起不来：' + (d.error||'');
+}
+
+/* ---------- 任务记在本机，刷新/关掉页面后还能接上（2026-10-30 用户要求） ---------- */
+const PPT_TASK_KEY = 'vc_ppt_task';
+
+function savePptTask(tid, name){
+  try{ localStorage.setItem(PPT_TASK_KEY, JSON.stringify({tid, name, t: Date.now()})); }catch(e){}
+  const b = document.getElementById('resumeBtn');
+  if(b){
+    b.style.background = 'rgba(255,154,60,.30)';
+    b.style.borderColor = 'rgba(255,154,60,.65)';
+    b.style.color = '#ffc38a';
+    b.style.opacity = '1';
+    b.textContent = '↻ 接上正在跑的那轮';
+  }
+}
+function readPptTask(){
+  try{ return JSON.parse(localStorage.getItem(PPT_TASK_KEY) || 'null'); }catch(e){ return null; }
+}
+function clearPptTask(){
+  try{ localStorage.removeItem(PPT_TASK_KEY); }catch(e){}
+  const b = document.getElementById('resumeBtn');
+  if(b){
+    b.style.background = 'rgba(255,154,60,.10)';
+    b.style.borderColor = 'rgba(255,154,60,.35)';
+    b.style.color = '#c9a486';
+    b.style.opacity = '.72';
+    b.textContent = '↻ 重新监视进度';
+  }
+}
+
+/* 重新接上：刷新页面之后点一下（或者一进页面自动接） */
+async function resumePpt(manual){
+  const rec = readPptTask();
+  if(!rec || !rec.tid){
+    if(manual) alert('现在没有在跑的任务。\n\n这个按钮是给「刷新/关掉页面之后」用的：\n边跑边接回进度。跑完或者没开跑，它就没东西可接。');
+    return;
+  }
+  try{
+    const t = await (await fetch('/api/ppt/task/' + rec.tid)).json();
+    if(t.state === 'missing'){
+      clearPptTask();
+      if(manual) alert('那个任务已经不在了（可能服务重启过）');
+      return;
+    }
+    // 把课件状态装回来（刷新后内存里的都丢了）
+    if(!PPT.name && rec.name){
+      const r = await fetch('/api/ppt/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:rec.name})});
+      const d = await r.json();
+      if(r.ok){ PPT.name = d.name; PPT.pages = d.pages; PPT.existing = d.existing || {}; }
+    }
+    showTab('ppt');
+    document.getElementById('pptProg').style.display = 'block';
+    await pollPpt(rec.tid);          // 从当前进度接着看
+    if(manual) document.getElementById('pptPmsg').textContent += '（已接上）';
+  }catch(e){
+    if(manual) alert('接不上：' + (e.message || e));
+  }
+}
+
+/* 边跑边听：开一个新页，自动带上当前课件名（2026-10-30 用户要的「跑到一半也能听」） */
+function openListenPage(){
+  if(!PPT.name){ alert('先导入一份课件'); return; }
+  window.open('/listen-while-running.html?name=' + encodeURIComponent(PPT.name), '_blank');
+}
+
+async function doPptBuild(patchOnly){
+  if(!PPT.name) return;
+  document.getElementById('pptBuildBtn').disabled = true;
+  const patchBtn = document.getElementById('pptPatchBtn');
+  if(patchBtn) patchBtn.disabled = true;
+  document.getElementById('pptProg').style.display = 'block';
+  document.getElementById('pptPmsg').textContent = '开始生成…';
+  const sel = document.getElementById('pptChar');
+  const charId = sel && sel.value ? sel.value : (CHARS[0]?CHARS[0].id:1);
+  const fmtSel = document.getElementById('pptFmt');
+  const fmt = fmtSel ? fmtSel.value : 'mp3';
+  const spdSel = document.getElementById('pptSpeed');
+  const speed = spdSel ? parseFloat(spdSel.value) : 1.0;
+  const res = await fetch('/api/ppt/build',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:PPT.name, char:charId, steps:32, pages:PPT.pages,
+                          skip_existing: !!patchOnly, fmt, speed})});
+  const d = await res.json();
+  if(d.task){ savePptTask(d.task, PPT.name); pollPpt(d.task); }
+  else { document.getElementById('pptPmsg').textContent = '起不来：' + (d.error||'');
+         document.getElementById('pptBuildBtn').disabled=false;
+         if(patchBtn) patchBtn.disabled=false; }
+}
+
+/* ---------- 做完之后：直接写回原来的位置 ---------- */
+/* 全部做完：一页一行，点「听」听这一页，不对就「重做这页」（只重做这一页） */
+function pptDoneOpen(msg){
+  const ex = PPT.existing || {};
+  const pages = (PPT.pages || []).filter(p => (p.sentences || []).length);
+  const done = pages.filter(p => ex[String(p.index)]).length;
+  document.getElementById('saveMsg').innerHTML =
+    (msg ? esc(msg) + '。' : '') +
+    '一页一行：<b>' + done + ' / ' + pages.length + ' 页有声音</b>。' +
+    '点「听」听听这页，不对就「重做这页」（只重做它）。都不用改就到下面保存。';
+  document.getElementById('pagesList').innerHTML = pages.map(p => {
+    const e = ex[String(p.index)];
+    // 左边放这一页的第一句，长了就省略号截掉 —— 一眼知道这页在讲什么
+    const first = ((p.sentences || [])[0] || '').replace(/\s+/g, ' ').trim();
+    return `<div class="prow${e ? '' : ' dim'}" ondblclick="openPageEditor(${p.index})">
+      <span class="pno">第 ${p.index} 页</span>
+      <span class="ptext" onclick="openPageEditor(${p.index})"
+            title="点一下：看这一页全部的话，可以直接改">${esc(first)}</span>
+      <span class="psec">${e ? Math.round(e.seconds) + ' 秒' : '—'}</span>
+      ${e ? `<button onclick="playPageByIndex(${p.index}, this)">▶ 听</button>` : ''}
+      <button onclick="redoPage(${p.index})" title="只重做这一页，别的不动">重做</button>
+    </div>`;
+  }).join('') || '<div class="prow">没有需要念的页</div>';
+  document.getElementById('saveModal').classList.remove('hidden');
+}
+
+/* 改这一页的讲稿：点首句或双击那一行打开 */
+let EDIT_ROW = null;
+function openPageEditor(i){
+  const p = (PPT.pages || []).find(x => x.index === i);
+  if(!p) return;
+  EDIT_ROW = i;
+  document.getElementById('peTitle').textContent = '第 ' + i + ' 页的讲稿';
+  document.getElementById('peText').value = ((p.sentences || []).join('\n'));
+  document.getElementById('editPageModal').classList.remove('hidden');
+  setTimeout(()=>{ try{ document.getElementById('peText').focus(); }catch(e){} }, 60);
+}
+function closePageEditor(){ document.getElementById('editPageModal').classList.add('hidden'); }
+async function savePageEditor(){
+  const i = EDIT_ROW;
+  const lines = document.getElementById('peText').value
+    .split('\n').map(x => x.trim()).filter(Boolean);
+  if(!lines.length){ alert('总得留一句：一句话都不留，这一页就没内容了'); return; }
+  const p = (PPT.pages || []).find(x => x.index === i);
+  if(p) p.sentences = lines;          // redoPage 会把改过的句子一起发出去
+  closePageEditor();
+  saveModalClose();
+  await redoPage(i);
+}
+
+/* 听某一页（弹窗里用）。★ 2026-10-30 教训：它原来叫 playPage，
+   把上面那个同名函数（播任意地址）覆盖掉了，结果「念一句」生成完却不播。 */
+function playPageByIndex(i, btn){
+  const e = (PPT.existing || {})[String(i)];
+  if(!e || !e.url) return;
+  playOne(e.url, btn, '▶ 听');
+}
+
+/* 只重做这一页 */
+async function redoPage(i){
+  saveModalClose();
+  const charSel = document.getElementById('pptChar');
+  const charId = charSel && charSel.value ? charSel.value : (CHARS[0] ? CHARS[0].id : 1);
+  const fmtSel = document.getElementById('pptFmt');
+  const fmt = fmtSel ? fmtSel.value : 'mp3';
+  const spdSel = document.getElementById('pptSpeed');
+  const speed = spdSel ? parseFloat(spdSel.value) : 1.0;
+  document.getElementById('pptProg').style.display = 'block';
+  document.getElementById('pptPmsg').textContent = '正在重做第 ' + i + ' 页…';
+  try{
+    const res = await fetch('/api/ppt/build',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:PPT.name, char:charId, steps:32, pages:PPT.pages,
+                            only:[i], fmt, speed})});
+    const d = await res.json();
+    if(d.task){ savePptTask(d.task, PPT.name); pollPpt(d.task); }
+    else document.getElementById('pptPmsg').textContent = '起不来：' + (d.error || '');
+  }catch(e){
+    document.getElementById('pptPmsg').textContent = '重做失败：' + (e.message || e);
+  }
+}
+function saveModalClose(){ document.getElementById('saveModal').classList.add('hidden'); }
+
+async function pptSaveAs(){
+  const m = document.getElementById('saveMsg');
+  let h = PPT_HANDLE;                // 导入时记住的那一份：直接写回去
+  if(!h && !window.showSaveFilePicker){
+    m.innerHTML = '这个浏览器不能直接写盘（直接用下面那个「下载一份」，再拖回去就行）。';
+    return;
+  }
+  try{
+    if(!h) h = await window.showSaveFilePicker({
+      suggestedName: (PPT.name || '有声课件') + '.pptx',
+      types:[{description:'PowerPoint 课件',
+              accept:{'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+                      ['.pptx']}}]
+    });
+  }catch(e){
+    if(e && e.name === 'AbortError') return;      // 自己点了取消
+    m.innerHTML = '没能选文件：' + esc(e.message || String(e));
+    return;
+  }
+  m.innerHTML = '正在写…';
+  try{
+    const res = await fetch('/api/ppt/download/' + encodeURIComponent(PPT.name));
+    if(!res.ok) throw new Error('拿不到生成好的文件');
+    const blob = await res.blob();
+    const w = await h.createWritable();
+    await w.write(blob);
+    await w.close();
+    // 写成功之后才清工作区（清的都是能再生的中间文件，源课件留着）
+    m.innerHTML = '写好了：<b>' + esc(h.name) + '</b>　就在你选的那个位置。正在清理中间文件…';
+    try{
+      const c = await (await fetch('/api/ppt/cleanup',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:PPT.name})})).json();
+      if(c && c.ok){
+        m.innerHTML = '写好了：<b>' + esc(h.name) + '</b>，中间文件也清掉了（' +
+          (c.removed||0) + ' 个）。原课件没动，源文件我留着了。';
+        PPT.existing = {};                 // 音频已经清掉，页面上的「听这页」别再指过去
+        try{ renderPpt(); }catch(e){}
+        clearPptTask();                    // 这一轮完事了，别再自动弹
+      }else{
+        m.innerHTML = '写好了：<b>' + esc(h.name) + '</b>（中间文件没清：' + esc((c&&c.error)||'不知道原因') + '）';
+      }
+    }catch(e){
+      m.innerHTML = '写好了：<b>' + esc(h.name) + '</b>（中间文件没清干净，但不影响课件）';
+    }
+  }catch(e){
+    m.innerHTML = '写不进去：' + esc(e.message || String(e));
+  }
+}
+function pptDownload(){
+  saveModalClose();
+  location.href = '/api/ppt/download/' + encodeURIComponent(PPT.name);
+}
+
+async function pollPpt(tid){
+  const t = await (await fetch('/api/ppt/task/'+tid)).json();
+  document.getElementById('pptFill').style.width = Math.round((t.progress||0)*100)+'%';
+  document.getElementById('pptPmsg').textContent = t.msg || '';
+  if(t.state === 'running'){ setTimeout(()=>pollPpt(tid), 2000); return; }
+  document.getElementById('pptBuildBtn').disabled = false;
+  const pb2 = document.getElementById('pptPatchBtn');
+  if(pb2) pb2.disabled = false;
+  if(t.state === 'done'){
+    document.getElementById('pptResult').innerHTML =
+      `<div class="bar"><button class="go" title="下载下来的文件名跟原课件一样；拖回原来的文件夹，选「替换」就覆盖那一版"
+        onclick="location.href='/api/ppt/download/${encodeURIComponent(PPT.name)}'">下载有声课件</button>
+       <span style="color:#8c8">${esc(t.msg||'')}</span></div>`;
+    // 先把「已生成」状态拉回来，弹窗里的逐页清单才有内容
+    try{
+      const r = await fetch('/api/ppt/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:PPT.name})});
+      const d2 = await r.json();
+      if(r.ok){ PPT.existing = d2.existing || {}; renderPpt(); }
+    }catch(e){}
+    pptDoneOpen(t.msg || '');       // 弹窗：逐页听 / 重做这一页 / 存哪儿
+  } else {
+    document.getElementById('pptPmsg').textContent = t.msg || '出错了';
+  }
+}
+
+/* ---------- 音乐术语表 ---------- */
+let GLOSS = [];
+
+async function loadGloss(){
+  try{
+    const d = await (await fetch('/api/ppt/glossary')).json();
+    GLOSS = d.terms || [];
+    renderGloss();
+  }catch(e){}
+}
+
+function renderGloss(){
+  const el = document.getElementById('glossList');
+  if(!el) return;
+  el.innerHTML = GLOSS.length ? GLOSS.map((t,i)=>`
+    <div class="row" style="grid-template-columns:1fr auto;padding:7px 14px">
+      <div><b>${esc(t.term)}</b>
+        <span style="color:#777;font-size:12.5px">${esc(t.lang || '')}${t.note ? ' · ' + esc(t.note) : ''}</span></div>
+      <div><button style="padding:4px 10px;font-size:13px" onclick="glossDel(${i})">删</button></div>
+    </div>`).join('') : '<div class="row"><div class="no"></div><div style="color:#999">还没有术语</div></div>';
+}
+
+function glossAdd(){
+  const term = (document.getElementById('gTerm').value || '').trim();
+  if(!term) return;
+  GLOSS.push({term, lang: document.getElementById('gLang').value,
+              note: (document.getElementById('gNote').value || '').trim()});
+  document.getElementById('gTerm').value = '';
+  document.getElementById('gNote').value = '';
+  renderGloss();
+}
+
+function glossDel(i){ GLOSS.splice(i, 1); renderGloss(); }
+
+async function glossSave(){
+  const msg = document.getElementById('glossMsg');
+  msg.textContent = '正在存…';
+  const res = await fetch('/api/ppt/glossary',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({terms:GLOSS})});
+  const d = await res.json();
+  msg.textContent = res.ok ? ('存好了：' + d.count + ' 条') : (d.error || '存不了');
+}
+
+loadVoices();     // ★ 2026-11-01：声库现在是默认页，打开就得有东西
+loadChars();
+if(readPptTask()) setTimeout(()=>resumePpt(false), 600);   // 刷新过：自动接上正在跑的那一轮
+refreshPptList();
+setTimeout(loadLastPpt, 900);                              // 刷新过：把上次的课件装回来
+
+/* 已导入过的课件：列出来，点一下就装回来 */
+async function refreshPptList(){
+  const sel = document.getElementById('pptPick');
+  if(!sel) return;
+  try{
+    const list = await (await fetch('/api/ppt/list')).json();
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">打开已有课件…</option>' + list.map(x =>
+      `<option value="${x.name}">${x.name}${x.done_pages ? '（' + x.done_pages + ' 页有声音）' : '（还没生成）'}</option>`
+    ).join('');
+    if(cur) sel.value = cur;
+  }catch(e){}
+}
+
+async function openPptByName(name){
+  if(!name) return;
+  const m = document.getElementById('pptMsg');
+  if(m) m.textContent = '正在装回：' + name + '…';
+  busyStart(8);
+  try{
+    const r = await fetch('/api/ppt/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name})});
+    const d = await r.json();
+    busyDone();
+    if(!r.ok){ if(m) m.textContent = '装不回来：' + (d.error || r.status); return; }
+    PPT.name = d.name; PPT.pages = d.pages; PPT.existing = d.existing || {};
+    renderPpt();
+    try{ localStorage.setItem('vc_ppt_last', d.name); }catch(e){}
+    const n = Object.keys(d.existing || {}).length;
+    if(m) m.textContent = '装好了：' + d.name + '，' + n + ' 页有声音';
+  }catch(e){
+    busyDone();
+    if(m) m.textContent = '装不回来：' + (e.message || e);
+  }
+}
+
+/* 刷新之后不用重新上传：服务端本来就有那份课件，按名字装回来就行 */
+async function loadLastPpt(){
+  let name = null;
+  try{ name = localStorage.getItem('vc_ppt_last'); }catch(e){}
+  if(!name || PPT.name) return;
+  try{
+    const r = await fetch('/api/ppt/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name})});
+    if(!r.ok) return;
+    const d = await r.json();
+    PPT.name = d.name; PPT.pages = d.pages; PPT.existing = d.existing || {};
+    renderPpt();
+    const m = document.getElementById('pptMsg');
+    if(m) m.textContent = '已装回上次的课件：' + d.name;
+  }catch(e){}
+}
+
+function showTab(t){
+  ['char','script','ppt','voices','clone','read'].forEach(k=>{
+    const pane = document.getElementById('pane'+k[0].toUpperCase()+k.slice(1));
+    if(pane) pane.classList.toggle('hidden', k!==t);
+    const tab = document.querySelector('.tabs .tab[data-tab="'+k+'"]');
+    if(tab) tab.classList.toggle('active', k===t);
+  });
+  if(t==='voices') loadVoices();
+  if(t==='read') readFillNarr();
+}
+
+/* ---------- 声库（2026-10-31 用户定） ---------- */
+let VLIC = {official:[], users:[]};
+
+/* 2026-11-01：朗读 / 剧本 / PPT 三处选人，都改成「官方九条 + 我的声音」整份声库 */
+const OFFICIAL_FALLBACK = [['vivian','薇薇安'],['serena','塞雷娜'],['uncle_fu','付叔'],
+  ['ryan','瑞恩'],['aiden','艾登'],['ono_anna','小野安娜'],['sohee','素熙'],
+  ['eric','埃里克'],['dylan','迪兰']];
+
+function officialList(){
+  return (VLIC && VLIC.official && VLIC.official.length)
+    ? VLIC.official : OFFICIAL_FALLBACK.map(a=>({id:a[0], name:a[1]}));
+}
+
+function whoName(cid){
+  if(cid === null || cid === undefined || cid === '') return '旁白';
+  const s = String(cid);
+  if(s.indexOf('o:') === 0){
+    const v = officialList().find(x=>x.id === s.slice(2));
+    return v ? v.name : s.slice(2);
+  }
+  const c = (CHARS||[]).find(x=>String(x.id) === s);
+  return c ? (c.name || '没名字') : (s + ' 号');
+}
+
+function officialOpts(sel){
+  return '<optgroup label="官方音色">' + officialList().map(v=>
+    `<option value="o:${v.id}"${String(sel)==='o:'+v.id?' selected':''}>${esc(v.name)}</option>`
+  ).join('') + '</optgroup>';
+}
+
+function charOpts(sel){
+  return '<optgroup label="我的声音">' + (CHARS||[]).map(c=>
+    `<option value="${c.id}"${String(sel)===String(c.id)?' selected':''}>${c.id} 号 · ${esc(c.name||'没名字')}</option>`
+  ).join('') + '</optgroup>';
+}
+
+/* 卡片头像的颜色（按顺序取，同一个声音每次一样） */
+const VOICE_COLORS = ['#ff9a3c','#6fb7ff','#b48cff','#5bd6a0','#ff7f9f','#ffd166','#7ec8ff','#ffa07a','#9ae6b4','#c9a0ff','#f28fb1','#7fd4c1'];
+
+/* 2026-11-01：下拉里挑的是官方音色时，一键收成自己的卡（之后能改名/配方言/换照片） */
+async function adoptVoice(selId){
+  const sel = document.getElementById(selId);
+  if(!sel) return;
+  const v = String(sel.value || '');
+  if(v.indexOf('o:') !== 0){
+    alert('先在上面挑一个「官方音色」，再点这个。');
+    return;
+  }
+  const vid = v.slice(2);
+  const nm = (officialList().find(x=>x.id === vid) || {}).name || vid;
+  if(!confirm('把「' + nm + '」收成你自己的声音？\n收进来之后能改名、配方言、换照片。')) return;
+  try{
+    const r = await fetch('/api/voices/import', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({voice: vid})});
+    const d = await r.json();
+    if(!r.ok){ alert(d.error || '收不进来'); return; }
+    await loadChars(); await loadVoices();
+    sel.value = String(d.card.id);
+    const msg = '收好了：' + d.card.id + ' 号 · ' + d.card.name + '（已经替你选中）';
+    const rm = document.getElementById('readMsg') || document.getElementById('pptPmsg');
+    if(rm) rm.textContent = msg; else alert(msg);
+  }catch(e){ alert('收不进来：' + e.message); }
+}
+
+function voiceCard(v, idx){
+  const ini = (v.name || '?').trim().slice(0,1);
+  const c = VOICE_COLORS[Math.abs(idx) % VOICE_COLORS.length];
+  const ava = v.avatar
+    ? `<div class="ava" style="background-image:url('${v.avatar}?t=${Date.now()}')"></div>`
+    : `<div class="ava" style="background:linear-gradient(135deg,${c},${c}88)">${esc(ini)}</div>`;
+  const kindc = v.kind === 'official' ? '官方'
+    : (v.kindc === 'official' ? '官方导入' : (v.kindc === 'design' ? '捏的' : '克隆'));
+  const tags = [];
+  if(v.dialect) tags.push(`<span class="vtag dia">${esc(v.dialect)}</span>`);
+  tags.push(`<span class="vtag gray">${kindc}</span>`);
+  return `<div class="vcard">
+    ${ava}
+    <div class="vname" title="${esc(v.name||'')}">${esc(v.name||'没名字')}</div>
+    <div class="vdesc">${esc(v.desc||'')}</div>
+    <div class="vtags">${tags.join('')}</div>
+    <div class="vacts">
+      <button onclick="libPreview('${v.kind}','${v.id}',this)">▶ 试听</button>
+      <button onclick="libMenu('${v.kind}','${v.id}',this)" title="改名字 / 方言 / 照片">⋯</button>
+    </div>
+  </div>`;
+}
+
+async function loadVoices(){
+  const msg = document.getElementById('voiceMsg');
+  try{
+    const d = await (await fetch('/api/voices/library')).json();
+    VLIC = d;
+    document.getElementById('voiceOfficial').innerHTML =
+      (d.official||[]).map((v,i)=>voiceCard(v,i)).join('');
+    document.getElementById('voiceUsers').innerHTML =
+      (d.users||[]).map((v,i)=>voiceCard(v,i+3)).join('');
+    if(msg) msg.textContent = '';
+  }catch(e){
+    if(msg) msg.textContent = '声库加载失败：' + e;
+  }
+}
+
+async function libPreview(kind, id, btn){
+  const a = document.getElementById('libAudio');
+  if(!a) return;
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '…';
+  try{
+    let url = '';
+    if(kind === 'official'){
+      /* 2026-11-01：声库里预录好的那句优先，点开就响；没预录才实时合成 */
+      const cand = '/api/audio/output/voices/preview_' + id + '.wav';
+      let has = false;
+      try{ const h = await fetch(cand, {cache:'force-cache'}); has = h.ok; }catch(e){}
+      if(has){ url = cand; }
+      else{
+        const r = await fetch('/api/voices/preview', {method:'POST',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({voice:id})});
+        const d = await r.json();
+        if(!r.ok) throw new Error(d.error || '试听失败');
+        url = d.url;
+      }
+    }else{
+      /* 2026-11-01：自己克隆的卡也一样——有预录就秒出，没预录才现合成 */
+      const cand = '/api/audio/characters/preview_' + id + '.wav';
+      let has = false;
+      try{ const h = await fetch(cand, {cache:'force-cache'}); has = h.ok; }catch(e){}
+      if(has){ url = cand; }
+      else{
+        const r = await fetch('/api/characters/' + id + '/say', {method:'POST',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({text:''})});
+        const d = await r.json();
+        if(!r.ok) throw new Error(d.error || '试听失败');
+        url = d.url;
+      }
+    }
+    a.classList.remove('hidden');
+    a.src = url + '?t=' + Date.now();
+    const p = a.play(); if(p && p.catch) p.catch(()=>{});
+  }catch(e){
+    alert(e.message || e);
+  }finally{
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+function libMenu(kind, id, el){
+  const all = (VLIC.official||[]).concat(VLIC.users||[]);
+  const v = all.find(x=>x.kind === kind && String(x.id) === String(id));
+  const m = document.getElementById('libMenu');
+  if(!m || !v) return;
+  const items = [];
+  items.push(`<div class="ci" onclick="libSetName('${kind}','${id}')">改名字…</div>`);
+  items.push(`<div class="ci" onclick="libSetDialect('${kind}','${id}')">方言：${v.dialect ? esc(v.dialect) : '（没填）'} …</div>`);
+  items.push(`<div class="ci" onclick="libSetAvatar('${kind}','${id}')">换照片…</div>`);
+  if(kind === 'official'){
+    items.push('<div class="cisep"></div>');
+    items.push(`<div class="ci" onclick="libUse('${id}')">收进「我的声音」（剧本/PPT 才选得到）</div>`);
+  }else{
+    items.push('<div class="cisep"></div>');
+    items.push(`<div class="ci" onclick="libDel('${id}')">从声库删掉</div>`);
+  }
+  m.innerHTML = items.join('');
+  m.style.display = 'block';
+  const r = el.getBoundingClientRect();
+  m.style.left = Math.max(8, Math.min(r.left - 110, innerWidth - 270)) + 'px';
+  m.style.top = Math.min(r.bottom + 6, innerHeight - 240) + 'px';
+}
+
+async function libMeta(kind, id, patch){
+  const r = await fetch('/api/voices/meta', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify(Object.assign({kind:kind, id:String(id)}, patch))});
+  const d = await r.json();
+  if(!r.ok){ alert(d.error || '没存上'); return false; }
+  return true;
+}
+
+async function libSetName(kind, id){
+  const all = (VLIC.official||[]).concat(VLIC.users||[]);
+  const v = all.find(x=>x.kind === kind && String(x.id) === String(id));
+  const name = prompt('叫什么名字？（剧本里就写这个名字）', v ? v.name : '');
+  if(name === null) return;
+  document.getElementById('libMenu').style.display = 'none';
+  if(await libMeta(kind, id, {name: name.trim()})){ await loadVoices(); await loadChars(); }
+}
+
+async function libSetDialect(kind, id){
+  const all = (VLIC.official||[]).concat(VLIC.users||[]);
+  const v = all.find(x=>x.kind === kind && String(x.id) === String(id));
+  const cur = v ? (v.dialect || '') : '';
+  const d = prompt('这个声音说哪种方言？（留空＝普通话）\n可以填：东北话 / 四川话 / 粤语 / 河南话 / 陕西话 / 山东话 / 天津话 / 闽南话 / 吴语', cur);
+  if(d === null) return;
+  document.getElementById('libMenu').style.display = 'none';
+  if(await libMeta(kind, id, {dialect: d.trim()})){ await loadVoices(); await loadChars(); }
+}
+
+function libSetAvatar(kind, id){
+  document.getElementById('libMenu').style.display = 'none';
+  const f = document.createElement('input');
+  f.type = 'file'; f.accept = 'image/*';
+  f.onchange = async e => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const b64 = await new Promise(r=>{const fr = new FileReader(); fr.onload = ()=>r(fr.result.split(',')[1]); fr.readAsDataURL(file);});
+    const res = await fetch('/api/voices/avatar', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({kind:kind, id:String(id), data:b64})});
+    const d = await res.json();
+    if(!res.ok){ alert(d.error || '换不了'); return; }
+    await loadVoices();
+  };
+  f.click();
+}
+
+async function libUse(voiceId){
+  document.getElementById('libMenu').style.display = 'none';
+  const r = await fetch('/api/voices/import', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({voice:voiceId})});
+  const d = await r.json();
+  if(!r.ok){ alert(d.error || '收不进来'); return; }
+  await loadChars(); await loadVoices();
+  document.getElementById('voiceMsg').textContent = '已收进「我的声音」：' + d.card.name;
+}
+
+async function libDel(id){
+  document.getElementById('libMenu').style.display = 'none';
+  if(!confirm('把这个声音从声库删掉？删除后剧本/PPT 里就选不到了。')) return;
+  await fetch('/api/characters/' + id + '/delete', {method:'POST'});
+  await loadChars(); await loadVoices();
+}
+
+function libMake(){
+  showTab('char');
+  const box = document.getElementById('charCreateBox');
+  if(box) box.scrollIntoView({behavior:'smooth', block:'center'});
+  const inp = document.getElementById('designDesc');
+  if(inp) inp.focus();
+}
+
+function libClone(){
+  showTab('clone');
+  const box = document.getElementById('recBtn') || document.getElementById('recStart');
+  if(box) box.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+document.addEventListener('click', e=>{
+  const m = document.getElementById('libMenu');
+  if(m && !e.target.closest('#libMenu')) m.style.display = 'none';
+});
+
+/* ---------- 角色 ---------- */
+async function loadChars(){
+  CHARS = await (await fetch('/api/characters')).json();
+  document.getElementById('charList').innerHTML = CHARS.map(c=>`
+    <div class="row" style="grid-template-columns:34px 1fr auto;">
+      <div class="no">${c.id}</div>
+      <div><label><input class="chk" type="checkbox" data-id="${c.id}">
+        <span class="who">${c.name||'（没名字）'}</span></label>
+        <div class="said" style="font-size:13px;color:#666">${c.desc}</div></div>
+      <div style="display:flex;gap:6px;align-items:center">
+        ${c.audio ? `<button onclick="playChar('${c.audio}', this)">▶ 试听</button>` : ''}
+        <select id="emo_${c.id}" title="用哪种情绪念"
+                style="font:13px inherit;padding:5px 7px;border-radius:8px;border:1px solid var(--line);
+                       background:rgba(255,255,255,.07);color:var(--ink)">
+          <option value="">本来的语气</option>
+          <option value="平静地说">平静</option>
+          <option value="高兴地说">高兴</option>
+          <option value="难过地说，声音有点低">难过</option>
+          <option value="有点生气地说">生气</option>
+          <option value="害怕地说，声音发抖">害怕</option>
+          <option value="惊讶地说">惊讶</option>
+          <option value="温柔地说">温柔</option>
+          <option value="很累地说，声音没力气">疲惫</option>
+        </select>
+        <select id="eng_${c.id}" onchange="setEngine(${c.id}, this.value)"
+                title="用谁念这个声音：本机稳；千问会演戏、体积小；大户对短素材更像，但要现叫醒（约两分钟）"
+                style="font:13px inherit;padding:5px 7px;border-radius:8px;border:1px solid var(--line);
+                       background:rgba(255,255,255,.07);color:var(--ink)">
+          <option value="voxcpm"${(c.engine||'voxcpm')==='voxcpm'?' selected':''}>引擎：本机</option>
+          <option value="qwen"${c.engine==='qwen'?' selected':''}>引擎：千问</option>
+          <option value="indextts"${c.engine==='indextts'?' selected':''}>引擎：大户</option>
+        </select>
+        <button onclick="sayChar(${c.id}, this)" title="用这个引擎念一句试试">念一句</button>
+        <button onclick="renameChar(${c.id})" title="改名字；改完自动存，不用再点保存">重命名</button>
+        <button onclick="delOne(${c.id})" title="删掉这个声音">删</button>
+      </div>
+    </div>`).join('') || '<div class="row"><div class="no"></div><div style="color:#999">还没有角色</div></div>';
+  document.querySelectorAll('.chk').forEach(el=>el.onchange=updateDel);
+  const sel = document.getElementById('pptChar');
+  if(sel){
+    sel.innerHTML = officialOpts() + charOpts();
+    const mine = CHARS.find(c=>c.name && c.name.indexOf('我的声音')>=0);
+    if(mine) sel.value = String(mine.id);
+  }
+  renderCloneList();
+  readFillNarr();         // ★ 角色一存好/改名/删除，朗读页的旁白下拉立刻同步
+}
+
+/* 声音克隆页里的「已经确认的声音」列表 */
+function renderCloneList(){
+  const el = document.getElementById('cloneList');
+  if(!el) return;
+  el.innerHTML = CHARS.length ? CHARS.map(c=>`
+    <div class="row" style="grid-template-columns:40px 1fr auto;align-items:center">
+      <div class="no">${c.id}</div>
+      <div><div class="who">${esc(c.name || '（没名字）')}</div>
+        <div style="color:#777;font-size:12.5px">${esc(c.desc || '')}</div></div>
+      <div style="display:flex;gap:6px">
+        <button style="padding:5px 11px;font-size:13px" onclick="playOne('${c.audio}', this, '▶ 听')">▶ 听</button>
+        <button style="padding:5px 11px;font-size:13px" onclick="renameChar(${c.id})">改名</button>
+        <button style="padding:5px 11px;font-size:13px" onclick="delOne(${c.id})">删</button>
+      </div>
+    </div>`).join('') : '<div class="row"><div class="no"></div><div style="color:#999">还没有确认过的声音</div></div>';
+}
+
+async function renameChar(id){
+  const c = CHARS.find(x=>x.id === id);
+  const name = prompt('新名字', c ? (c.name || '') : '');
+  if(!name || !name.trim()) return;
+  const res = await fetch('/api/characters/' + id + '/rename', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:name.trim()})});
+  if(!res.ok){ alert('改不了'); return; }
+  await loadChars();
+}
+
+async function delOne(id){
+  const c = CHARS.find(x=>x.id === id);
+  if(!confirm('删掉 ' + id + ' 号' + (c && c.name ? ' · ' + c.name : '') + '？')) return;
+  await fetch('/api/characters/' + id + '/delete', {method:'POST'});
+  await loadChars();
+}
+
+let DESIGN = {text:''};
+
+async function doDesign(btn){
+  const desc = (document.getElementById('designDesc').value || '').trim();
+  if(!desc){ alert('先写一句描述：他是谁、多大年纪、声音什么样'); return; }
+  if(btn) btn.disabled = true;
+  const msg = document.getElementById('designMsg');
+  msg.textContent = '捏着，稍等…';
+  try{
+    const res = await fetch('/api/design',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({desc})});
+    const d = await res.json();
+    if(!res.ok){ msg.textContent = d.error || '捏不出来'; return; }
+    DESIGN.text = d.text || '';
+    const box = document.getElementById('designCands');
+    box.classList.remove('hidden');
+    box.innerHTML = (d.candidates || []).map((c, i)=>`
+      <label style="display:flex;gap:10px;align-items:center;margin-bottom:8px;cursor:pointer">
+        <input type="radio" name="designCand" value="${i}" ${i === 0 ? 'checked' : ''}>
+        <span style="color:#aaa;font-size:13px;min-width:92px">候选 ${i + 1}（${Math.round(c.seconds)} 秒）</span>
+        <audio controls preload="none" style="height:32px;width:220px" src="${c.url}?t=${Date.now()}"></audio>
+      </label>`).join('');
+    await applySink(box.querySelector('audio'));
+    document.getElementById('designOkBtn').disabled = false;
+    msg.textContent = '三条都听听，选中哪条就点「就它了」';
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
+async function designConfirm(btn){
+  const desc = (document.getElementById('designDesc').value || '').trim();
+  const name = (document.getElementById('designName').value || '').trim();
+  if(btn) btn.disabled = true;
+  try{
+    const sel = document.querySelector('input[name="designCand"]:checked');
+    const cand = sel ? parseInt(sel.value) : 0;
+    const res = await fetch('/api/design/confirm',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({desc, text:DESIGN.text, name, cand})});
+    const d = await res.json();
+    if(!res.ok){ alert(d.error || '收不进去'); return; }
+    document.getElementById('designMsg').textContent = '收好了：' + d.card.id + ' 号 · ' + (d.card.name || '没名字');
+    await loadChars();
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
+async function sayChar(id, btn){
+  if(btn){ btn.disabled = true; btn.textContent = '念…'; }
+  busyStart(18);
+  try{
+    const emo = document.getElementById('emo_' + id);
+    const body = JSON.stringify({emotion: emo ? emo.value : ''});
+    const res = await fetch('/api/characters/' + id + '/say', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body});
+    const d = await res.json();
+    if(!res.ok){ alert(d.error || '念不出来'); return; }
+    await playPage(d.url);
+  } finally {
+    busyDone();
+    if(btn){ btn.disabled = false; btn.textContent = '念一句'; }
+  }
+}
+function updateDel(){
+  document.getElementById('delBtn').disabled = !document.querySelectorAll('.chk:checked').length;
+}
+/* 单声道播放器：点同一个按钮再按一次就停，绝不叠着放 */
+let ONE = {el:null, btn:null, label:'▶ 试听'};
+function stopOneAudio(){
+  if(ONE.el){ try{ ONE.el.pause(); ONE.el.currentTime = 0; }catch(e){} }
+  if(ONE.btn) ONE.btn.textContent = ONE.label;
+  ONE = {el:null, btn:null, label:'▶ 试听'};
+}
+function playOne(src, btn, label){
+  label = label || '▶ 试听';
+  if(ONE.el && ONE.btn === btn){ stopOneAudio(); return; }
+  stopOneAudio();
+  const a = new Audio(src + (src.indexOf('?')>=0?'':'?t=') + Date.now());
+  ONE = {el:a, btn, label};
+  if(btn) btn.textContent = '■ 停';
+  applySink(a).then(()=>a.play()).catch(()=>a.play());
+  a.onended = ()=>{ if(ONE.el === a) stopOneAudio(); };
+}
+function playChar(src, btn){ playOne(src, btn); }
+async function delChars(){
+  const ids=[...document.querySelectorAll('.chk:checked')].map(e=>e.dataset.id);
+  for(const id of ids) await fetch(`/api/characters/${id}/delete`,{method:'POST'});
+  document.getElementById('charMsg').textContent = `删掉了 ${ids.join('、')} 号`;
+  /* ---------- 文件菜单 ---------- */
+function toggleFM(e){ e.stopPropagation(); const m=document.getElementById('fmenu');
+  m.style.display = m.style.display==='block' ? 'none':'block'; }
+document.addEventListener('click',e=>{ if(!e.target.closest('#fmenu')) document.getElementById('fmenu').style.display='none'; });
+
+function newProject(){
+  if(!confirm('清空当前剧本，开始新的？')) return;
+  document.getElementById('scriptIn').value=''; document.getElementById('lineList').innerHTML='';
+  document.getElementById('result').innerHTML=''; VOICES={}; LINES=[];
+  document.getElementById('rehBtn').disabled=true;
+  document.title='VoiceCaster';
+}
+async function saveProject(){
+  const name = prompt('项目名（存到 projects/ 里）', document.title==='VoiceCaster'?'未命名':document.title);
+  if(!name) return;
+  await fetch('/api/project/save',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name, script:document.getElementById('scriptIn').value, voices:VOICES})});
+  document.title = name;
+  alert('已保存：'+name);
+}
+async function showOpen(){
+  const list = await (await fetch('/api/projects')).json();
+  const box=document.getElementById('openBox');
+  box.innerHTML = '<h3>打开项目</h3>' + (list.length? list.map(p=>
+    `<div class="item" onclick="loadProject('${p.name}')">${p.name}<small>${p.saved}</small></div>`).join('')
+    : '<div style="color:#888">还没有保存过项目</div>');
+  document.getElementById('openDlg').style.display='flex';
+}
+async function loadProject(name){
+  const d = await (await fetch('/api/project/'+encodeURIComponent(name))).json();
+  document.getElementById('scriptIn').value = d.script||'';
+  VOICES = d.voices||{};
+  document.getElementById('openDlg').style.display='none';
+  document.title = name;
+  await doParse();
+  renderLines();
+}
+function exportCast(){
+  location.href = '/api/cast/export';
+}
+function pickCast(){ document.getElementById('castFile').click(); }
+document.getElementById('castFile').onchange = async e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const b64 = await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f);});
+  const res = await fetch('/api/cast/import',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({data:b64})});
+  const d = await res.json();
+  e.target.value = '';
+  if(!res.ok){ alert(d.error || '载入失败'); return; }
+  await loadChars();
+  alert('载入了 ' + d.added + ' 个角色' +
+        (d.renumbered.length ? '（编号冲突，已改号：' + d.renumbered.join('、') + '）' : ''));
+};
+
+function pickBatchAudio(){ document.getElementById('batchAudio').click(); }
+document.getElementById('batchAudio').onchange = async e=>{
+  const files = [...e.target.files];
+  if(!files.length) return;
+  const msg = document.getElementById('batchMsg');
+  msg.textContent = '正在读 ' + files.length + ' 个文件…';
+  const items = [];
+  for(const f of files){
+    const b64 = await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f);});
+    items.push({name: f.name, data: b64});
+  }
+  msg.textContent = '正在转 ' + items.length + ' 个…';
+  const res = await fetch('/api/characters/import-batch',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({items})});
+  const d = await res.json();
+  e.target.value = '';
+  if(!res.ok){ msg.textContent = d.error || '导入失败'; return; }
+  await loadChars();
+  msg.textContent = '导入了 ' + d.added.length + ' 个：' + d.added.join('、') +
+    (d.failed.length ? '；没读出来：' + d.failed.join('、') : '');
+};
+
+let IMPORT_AS_SCRIPT = false;
+function pickDoc(){ IMPORT_AS_SCRIPT = false; document.getElementById('docxFile').click(); }
+function pickScriptFile(){ IMPORT_AS_SCRIPT = true; document.getElementById('docxFile').click(); }
+document.getElementById('docxFile').onchange = async e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const b64 = await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f);});
+  const res = await fetch('/api/import/text',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:f.name, data:b64})});
+  const d = await res.json();
+  e.target.value = '';
+  if(!res.ok){ alert(d.error || '读不了这个文件'); return; }
+  document.getElementById('scriptIn').value = d.text;
+  showTab('script');
+  if(IMPORT_AS_SCRIPT){
+    await doParse();
+  }else{
+    alert('导入了 ' + d.text.split('\n').length + ' 行。先看一眼，再点「读剧本」。');
+  }
+};
+async function exportDocx(){
+  const res = await fetch('/api/export/docx',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({script:document.getElementById('scriptIn').value, voices:VOICES, title:document.title||'剧本'})});
+  if(!res.ok){ alert('导出失败'); return; }
+  const blob = await res.blob();
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=(document.title||'剧本')+'.docx'; a.click();
+}
+
+loadChars();
+}
+
+/* ---------- 剧本 ---------- */
+let PARSE = {summary:[], unmapped:[]};
+
+function addScene(){
+  const name = prompt('这一场叫什么？（比如：广告片头 / 派活 / 账单爆发）');
+  if(!name || !name.trim()) return;
+  const ta = document.getElementById('scriptIn');
+  const n = (ta.value.match(/^[─—\-=]{3,}.*\[\d+\]/gm) || []).length + 1;
+  const line = '────── [' + String(n).padStart(2, '0') + '] ' + name.trim() + ' ──────';
+  const head = ta.value.replace(/\s*$/, '');
+  ta.value = (head ? head + '\n' : '') + line + '\n';
+  ta.focus();
+  ta.scrollTop = ta.scrollHeight;
+}
+
+async function doParse(){
+  const text = document.getElementById('scriptIn').value;
+  const r = await (await fetch('/api/parse',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({text})})).json();
+  LINES = r.lines;
+  PARSE = {summary: r.summary||[], unmapped: r.unmapped||[]};
+  MARKS = {}; SEL_NO = null; renderMarks();     // 重新读剧本，旧的打点对不上了
+  renderLines();
+  renderSummary();
+  document.getElementById('rehBtn').disabled = !LINES.length;
+  VOICES = {};
+}
+
+function renderSummary(){
+  const el = document.getElementById('sumBox');
+  if(!PARSE.summary.length){ el.innerHTML=''; return; }
+  const how = m => m==='fuzzy' ? '（名字相近）' : m==='contains' ? '（名字包含）' : '';
+  el.innerHTML = '<div class="list" style="margin-bottom:12px">' + PARSE.summary.map(s=>`
+    <div class="row" style="grid-template-columns:1fr auto;padding:8px 15px">
+      <div>${esc(s.name)} <span style="color:#777;font-size:13px">${s.count} 句</span></div>
+      <div style="font-size:13px">${s.char_id !== null
+        ? `<span style="color:#8c8">${s.char_id} 号</span><span style="color:#777">${how(s.match)}</span>`
+        : '<span class="miss">未匹配 · 需要你指派</span>'}</div>
+    </div>`).join('') + '</div>';
+}
+
+/* ---------- 视频打点 ---------- */
+let MARKS = {};      // 句号 -> 秒
+let SEL_NO = null;
+
+function fmtT(sec){
+  const m = Math.floor(sec / 60), s = sec - m * 60;
+  return String(m).padStart(2,'0') + ':' + s.toFixed(3).padStart(6,'0');
+}
+
+document.getElementById('vidFile').onchange = e => {
+  const f = e.target.files[0]; if(!f) return;
+  const v = document.getElementById('vid');
+  v.src = URL.createObjectURL(f);        // 只预览，不复制文件
+  v.style.display = 'block';
+  document.getElementById('markBtn').disabled = false;
+  document.getElementById('markMsg').textContent = f.name + ' · 只是预览，不会进项目';
+  e.target.value = '';
+};
+
+function addMark(){
+  const v = document.getElementById('vid');
+  if(SEL_NO === null){
+    document.getElementById('markMsg').textContent = '先在下面点一句台词，再打点';
+    return;
+  }
+  MARKS[SEL_NO] = v.currentTime;
+  renderMarks();
+  document.getElementById('markMsg').textContent = '第 ' + SEL_NO + ' 句 → ' + fmtT(v.currentTime);
+}
+
+function renderMarks(){
+  const el = document.getElementById('markList');
+  const items = Object.entries(MARKS).sort((a,b)=>a[1]-b[1]);
+  el.innerHTML = items.length ? items.map(([no,t])=>{
+    const l = LINES.find(x=>String(x.no)===String(no)) || {};
+    return `<div class="row" style="grid-template-columns:84px 1fr;padding:7px 12px">
+      <div class="no" style="text-align:left">${fmtT(t)}</div>
+      <div style="font-size:14px">${no}. ${l.name||''}：${l.text||''}</div></div>`;
+  }).join('') : '<div style="color:#888;font-size:13px">还没有打点</div>';
+}
+
+function renderLines(){
+  const el = document.getElementById('lineList');
+  if(!LINES.length){ el.innerHTML='<div class="row"><div class="no"></div><div style="color:#999">一句都没读出来</div></div>'; return; }
+  const hasSec = LINES.some(l=>l.section);
+  let html = '', last = null;
+  LINES.forEach(l=>{ l.spans = l.spans || []; l.pauses = l.pauses || []; });
+  LINES.forEach(l=>{
+    if(hasSec && l.section !== last){
+      html += `<div class="row" style="grid-template-columns:1fr auto;padding:8px 15px;background:rgba(255,154,60,.09);align-items:center">
+        <div class="who" style="color:#ffbf80;font-size:13.5px;letter-spacing:.5px">${esc(l.section || '（开场）')}</div>
+        <div>${l.section ? `<button style="font-size:12.5px;padding:3px 9px" onclick='doRehearseSection(${JSON.stringify(l.section)})'>排演这场</button>` : ''}</div></div>`;
+      last = l.section;
+    }
+    const v = VOICES[l.no];
+    const miss = l.char_id ? (l.match==='fuzzy' ? ` <span class="tag gray">疑似 ${l.char_id} 号</span>` : '')
+                           : ' <span class="miss">（还没有这个角色）</span>';
+    html += `<div class="row" data-no="${l.no}">
+      <div class="no">${l.no}</div>
+      <div><div class="who">${l.name}${miss}</div>
+        <div class="said">${readPaint(l)}</div>
+        ${v?`<div class="tag">🔊 ${v}</div>`:''}
+        ${l.emotion?`<div class="tag gray">情绪：${l.emotion}</div>`:''}
+      </div></div>`;
+  });
+  el.innerHTML = html;
+  document.querySelectorAll('.row[data-no]').forEach(r=>{
+    r.addEventListener('click', ()=>{
+      SEL_NO = +r.dataset.no;
+      document.querySelectorAll('.row[data-no]').forEach(x=>x.style.background='');
+      r.style.background = 'rgba(255,154,60,.16)';
+    });
+    r.addEventListener('contextmenu',e=>{
+      e.preventDefault(); curRow = +r.dataset.no;
+      const l = LINES.find(x=>x.no === curRow); if(!l) return;
+      const tEl = r.querySelector('.said');
+      const sel = window.getSelection();
+      let a = 0, z = 0;
+      if(sel && sel.rangeCount && tEl){
+        const rng = sel.getRangeAt(0);
+        if(tEl.contains(rng.startContainer) && tEl.contains(rng.endContainer)){
+          a = readOffset(tEl, rng.startContainer, rng.startOffset);
+          z = readOffset(tEl, rng.endContainer, rng.endOffset);
+          if(z < a){ const t = a; a = z; z = t; }
+        }
+      }
+      const n = (l.text || '').length;
+      DLG_SEL = {no: curRow, a: Math.max(0, Math.min(n, a)), z: Math.max(0, Math.min(n, z))};
+      showLineMenu(e.clientX, e.clientY);
+    });
+  });
+}
+document.getElementById('mi').onclick = ()=>{
+  document.getElementById('menu').style.display='none'; openDlg(curRow);
+};
+document.addEventListener('click',e=>{
+  if(!e.target.closest('#menu')) document.getElementById('menu').style.display='none';
+});
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeDlg(false); document.getElementById('menu').style.display='none'; }});
+
+/* ---------- 弹窗与拉杆 ---------- */
+function speedWord(v){ if(v<22)return'说得很慢，一字一句'; if(v<40)return'说得偏慢'; if(v>78)return'说得偏快'; if(v>60)return'语速略快'; return''; }
+function forceWord(v){ if(v<22)return'声音压得很低，气声，几乎听不见'; if(v<40)return'声音放轻'; if(v>78)return'气息很重，声音发紧，咬着牙说'; if(v>60)return'语气加重'; return''; }
+function compose(){
+  const hand=document.getElementById('dv').value.trim();
+  const parts=[]; if(hand)parts.push(hand);
+  const sp=speedWord(+document.getElementById('rSpeed').value); if(sp)parts.push(sp);
+  const fo=forceWord(+document.getElementById('rForce').value); if(fo)parts.push(fo);
+  const out=parts.join('，');
+  const c = LINES.find(x=>x.no===curRow);
+  const base = c && c.char_id ? (CHARS.find(x=>x.id===c.char_id)?.desc||'') : '';
+  document.getElementById('preview').innerHTML = '最终交给模型：<b>'+
+    (out ? ((base?base+'，':'')+out) : '（没加东西，就是角色本来的声音）') + '</b>';
+  return out;
+}
+['rSpeed','rForce','dv'].forEach(id=>document.getElementById(id).addEventListener('input',compose));
+document.querySelectorAll('.tips i').forEach(el=>{ el.onclick=()=>{document.getElementById('dv').value=el.textContent;compose();}; });
+
+/* ---------- 2026-11-01：演戏这边也吃「选中几个字加语气」「光标处插停顿」 ---------- */
+let DLG_SEL = null;    // 右键那一刻记下的选区 {no, a, z}
+let DLG_SPAN = false;  // 这次对话框改的是「选中的几个字」还是整句
+
+function lineMarks(){
+  const m = {};
+  (LINES||[]).forEach(l=>{
+    const sp = l.spans || [], pa = l.pauses || [];
+    if(sp.length || pa.length) m[l.no] = {spans: sp, pauses: pa};
+  });
+  return m;
+}
+
+function showLineMenu(x, y){
+  const s = DLG_SEL || {};
+  const l = LINES.find(v=>v.no === s.no); if(!l) return;
+  const hasSel = s.z > s.a;
+  const pick = hasSel ? (l.text || '').slice(s.a, s.z) : '';
+  const short = pick.length > 10 ? pick.slice(0, 10) + '…' : pick;
+  const m = document.getElementById('menu');
+  m.innerHTML =
+    `<div class="chd">第 ${l.no} 句</div>` +
+    (hasSel
+      ? `<div class="ci" onclick="openDlg(${l.no}, 1)">给「${esc(short)}」加语气…</div>`
+      : `<div class="ci" onclick="openDlg(${l.no}, 0)">给整句加说话声音…</div>`) +
+    `<div class="ci" onclick="addLinePause(${l.no}, ${s.a|0})">${hasSel ? '在选中的字前面插停顿…' : '在光标处插停顿…'}</div>` +
+    `<div class="cisep"></div>` +
+    `<div class="ci" onclick="clearLineMarks(${l.no})">清掉这一句的标记</div>`;
+  m.style.display = 'block';
+  m.style.left = Math.min(x, innerWidth - 270) + 'px';
+  m.style.top  = Math.min(y, innerHeight - 170) + 'px';
+}
+
+function addLinePause(no, at){
+  const l = LINES.find(x=>x.no === no); if(!l) return;
+  const pos = Math.max(0, Math.min((l.text || '').length, at|0));
+  document.getElementById('menu').style.display = 'none';
+  const v = prompt('在这里停几秒？（比如 0.3 / 0.6 / 1）', '0.6');
+  if(v === null) return;
+  const sec = parseFloat(v);
+  if(!(sec > 0)){ alert('要写一个大于 0 的秒数'); return; }
+  l.pauses = l.pauses || [];
+  l.pauses.push({at: pos, sec: Math.min(30, sec)});
+  renderLines();
+}
+
+function clearLineMarks(no){
+  const l = LINES.find(x=>x.no === no); if(!l) return;
+  l.spans = []; l.pauses = []; delete VOICES[no];
+  document.getElementById('menu').style.display = 'none';
+  renderLines();
+}
+
+function openDlg(no, span){
+  const l = LINES.find(x=>x.no===no); if(!l) return;
+  const s = (DLG_SEL && DLG_SEL.no === no) ? DLG_SEL : {no: no, a: 0, z: 0};
+  DLG_SPAN = !!span && (s.z > s.a);
+  document.getElementById('dt').textContent = DLG_SPAN
+    ? `第 ${no} 句 · 只改选中的 ${s.z - s.a} 个字`
+    : `第 ${no} 句 · ${l.name}`;
+  document.getElementById('dq').textContent = DLG_SPAN
+    ? '「' + (l.text || '').slice(s.a, s.z) + '」'
+    : '「' + l.text + '」';
+  let cur = '';
+  if(DLG_SPAN){
+    const hit = (l.spans || []).find(x=>x.start === s.a && x.end === s.z);
+    cur = hit ? (hit.instruct || '') : '';
+  } else {
+    cur = VOICES[no] || '';
+  }
+  document.getElementById('dv').value = cur;
+  document.getElementById('rSpeed').value = 50;
+  document.getElementById('rForce').value = 50;
+  compose();
+  document.getElementById('mask').style.display='flex';
+  document.getElementById('dv').focus();
+}
+function closeDlg(save){
+  const l = LINES.find(x=>x.no === curRow);
+  if(save === 'clear'){
+    if(DLG_SPAN && DLG_SEL && l){
+      l.spans = (l.spans || []).filter(x=>!(x.start === DLG_SEL.a && x.end === DLG_SEL.z));
+    } else {
+      delete VOICES[curRow];
+    }
+  } else if(save){
+    const v = compose();
+    if(DLG_SPAN && DLG_SEL && l){
+      l.spans = (l.spans || []).filter(x=>!(x.start === DLG_SEL.a && x.end === DLG_SEL.z));
+      if(v) l.spans.push({start: DLG_SEL.a, end: DLG_SEL.z, cid: null, instruct: v});
+    } else if(v){ VOICES[curRow] = v; } else { delete VOICES[curRow]; }
+  }
+  document.getElementById('mask').style.display='none';
+  renderLines();
+}
+
+/* ---------- 排演 ---------- */
+async function doRehearse(){
+  const text = document.getElementById('scriptIn').value;
+  const r = await (await fetch('/api/rehearse',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({text, voices:VOICES, marks:lineMarks()})})).json();
+  TASK = r.task;
+  document.getElementById('rehBtn').disabled = true;
+  document.getElementById('prog').style.display='block';
+  document.getElementById('result').innerHTML = '';
+  poll();
+}
+async function doRehearseSection(sec){
+  if(!sec) return;
+  const text = document.getElementById('scriptIn').value;
+  const r = await (await fetch('/api/rehearse',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({text, voices:VOICES, section:sec, marks:lineMarks()})})).json();
+  TASK = r.task;
+  document.getElementById('rehBtn').disabled = true;
+  document.getElementById('prog').style.display='block';
+  document.getElementById('result').innerHTML = '';
+  poll();
+}
+async function poll(){
+  const t = await (await fetch('/api/task/'+TASK)).json();
+  document.getElementById('fill').style.width = Math.round((t.progress||0)*100)+'%';
+  document.getElementById('pmsg').textContent = t.msg||'';
+  if(t.state==='done'){
+    document.getElementById('rehBtn').disabled=false;
+    const rows = (t.files||[]).map((f,i)=>{
+      const l = LINES[i] || {};
+      return `<div class="row" style="grid-template-columns:1fr auto;padding:8px 14px">
+         <div style="font-size:14px">${f.name}${l.name ? ' · ' + l.name : ''}</div>
+         <div style="display:flex;gap:8px;align-items:center">
+           <audio id="aud_${l.no}" controls preload="none" style="height:34px;width:200px;margin:0" src="${f.url}"></audio>
+           <button style="padding:4px 10px;font-size:13px" onclick="redoLine(${l.no}, this)">重念这句</button>
+         </div>
+       </div>`;
+    }).join('');
+    window.__lastFiles = t.files || [];
+    document.getElementById('result').innerHTML =
+      `<div class="bar"><button class="go" onclick="document.getElementById('player').play()">▶ 试听整段</button>
+       <span style="color:#999;font-size:13px">${t.msg}</span></div>
+       <audio id="player" controls src="${t.audio}"></audio>
+       <div class="bar" style="margin-top:14px">
+         <select id="packFmt" style="font:15px inherit;padding:7px 10px;border-radius:9px;
+                 border:1px solid var(--line);background:rgba(255,255,255,.07);color:var(--ink)">
+           <option value="mp3">MP3（默认，老电脑也能放）</option>
+           <option value="m4a">M4A（更小，手机友好）</option>
+           <option value="wav">WAV（混音母版）</option>
+         </select>
+         <button class="go" onclick="exportPack()">导出包</button>
+         <span id="packMsg" style="color:#666;font-size:13px"></span>
+       </div>
+       <div style="margin:18px 0 8px;color:#aaa;font-size:13px">分句文件（每个开头 1 秒静音）：</div>
+       <div class="list">${rows}</div>`;
+    return;
+  }
+  if(t.state==='error'){ document.getElementById('rehBtn').disabled=false; return; }
+  setTimeout(poll, 1000);
+}
+
+/* 单句重念：只覆盖这一句的文件，别的句不动 */
+async function redoLine(no, btn){
+  const l = LINES.find(x=>x.no === no);
+  if(!l) return;
+  if(btn){ btn.disabled = true; btn.textContent = '重念中…'; }
+  try{
+    const res = await fetch('/api/rehearse/line',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({no, name:l.name, text:l.text,
+                           emotion:l.emotion || '', voice:VOICES[no] || '',
+                           spans:l.spans || [], pauses:l.pauses || []})});
+    const d = await res.json();
+    if(!res.ok){ alert(d.error || '重念失败'); return; }
+    const a = document.getElementById('aud_' + no);
+    if(a){ a.src = d.url + '?t=' + Date.now(); await applySink(a); a.play(); }
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = '重念这句'; }
+  }
+}
+
+async function exportPack(){
+  const files = (window.__lastFiles||[]).map(f=>f.name);
+  if(!files.length){ alert('先排演一遍'); return; }
+  const fmt = document.getElementById('packFmt').value;
+  const msg = document.getElementById('packMsg');
+  msg.textContent = '正在转格式、写清单…';
+  const res = await fetch('/api/export/package',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:document.title||'导出包', files, lines:LINES, format:fmt, srt:true, marks:MARKS})});
+  const d = await res.json();
+  if(!res.ok){ msg.textContent = d.error || '导出失败'; return; }
+  msg.textContent = `好了：${d.count} 条，共 ${d.seconds} 秒`;
+  location.href = d.url;
+}
+
+/* ---------- 文件菜单 ---------- */
+function toggleFM(e){ e.stopPropagation(); const m=document.getElementById('fmenu');
+  m.style.display = m.style.display==='block' ? 'none':'block'; }
+document.addEventListener('click',e=>{ if(!e.target.closest('#fmenu')) document.getElementById('fmenu').style.display='none'; });
+
+function newProject(){
+  if(!confirm('清空当前剧本，开始新的？')) return;
+  document.getElementById('scriptIn').value=''; document.getElementById('lineList').innerHTML='';
+  document.getElementById('result').innerHTML=''; VOICES={}; LINES=[];
+  document.getElementById('rehBtn').disabled=true;
+  document.title='VoiceCaster';
+}
+async function saveProject(){
+  const name = prompt('项目名（存到 projects/ 里）', document.title==='VoiceCaster'?'未命名':document.title);
+  if(!name) return;
+  await fetch('/api/project/save',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name, script:document.getElementById('scriptIn').value, voices:VOICES})});
+  document.title = name;
+  alert('已保存：'+name);
+}
+async function showOpen(){
+  const list = await (await fetch('/api/projects')).json();
+  const box=document.getElementById('openBox');
+  box.innerHTML = '<h3>打开项目</h3>' + (list.length? list.map(p=>
+    `<div class="item" onclick="loadProject('${p.name}')">${p.name}<small>${p.saved}</small></div>`).join('')
+    : '<div style="color:#888">还没有保存过项目</div>');
+  document.getElementById('openDlg').style.display='flex';
+}
+async function loadProject(name){
+  const d = await (await fetch('/api/project/'+encodeURIComponent(name))).json();
+  document.getElementById('scriptIn').value = d.script||'';
+  VOICES = d.voices||{};
+  document.getElementById('openDlg').style.display='none';
+  document.title = name;
+  await doParse();
+  renderLines();
+}
+function exportCast(){
+  location.href = '/api/cast/export';
+}
+function pickCast(){ document.getElementById('castFile').click(); }
+document.getElementById('castFile').onchange = async e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const b64 = await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f);});
+  const res = await fetch('/api/cast/import',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({data:b64})});
+  const d = await res.json();
+  e.target.value = '';
+  if(!res.ok){ alert(d.error || '载入失败'); return; }
+  await loadChars();
+  alert('载入了 ' + d.added + ' 个角色' +
+        (d.renumbered.length ? '（编号冲突，已改号：' + d.renumbered.join('、') + '）' : ''));
+};
+
+function pickBatchAudio(){ document.getElementById('batchAudio').click(); }
+document.getElementById('batchAudio').onchange = async e=>{
+  const files = [...e.target.files];
+  if(!files.length) return;
+  const msg = document.getElementById('batchMsg');
+  msg.textContent = '正在读 ' + files.length + ' 个文件…';
+  const items = [];
+  for(const f of files){
+    const b64 = await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f);});
+    items.push({name: f.name, data: b64});
+  }
+  msg.textContent = '正在转 ' + items.length + ' 个…';
+  const res = await fetch('/api/characters/import-batch',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({items})});
+  const d = await res.json();
+  e.target.value = '';
+  if(!res.ok){ msg.textContent = d.error || '导入失败'; return; }
+  await loadChars();
+  msg.textContent = '导入了 ' + d.added.length + ' 个：' + d.added.join('、') +
+    (d.failed.length ? '；没读出来：' + d.failed.join('、') : '');
+};
+
+let IMPORT_AS_SCRIPT = false;
+function pickDoc(){ IMPORT_AS_SCRIPT = false; document.getElementById('docxFile').click(); }
+function pickScriptFile(){ IMPORT_AS_SCRIPT = true; document.getElementById('docxFile').click(); }
+document.getElementById('docxFile').onchange = async e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const b64 = await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f);});
+  const res = await fetch('/api/import/text',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:f.name, data:b64})});
+  const d = await res.json();
+  e.target.value = '';
+  if(!res.ok){ alert(d.error || '读不了这个文件'); return; }
+  document.getElementById('scriptIn').value = d.text;
+  showTab('script');
+  if(IMPORT_AS_SCRIPT){
+    await doParse();
+  }else{
+    alert('导入了 ' + d.text.split('\n').length + ' 行。先看一眼，再点「读剧本」。');
+  }
+};
+async function exportDocx(){
+  const res = await fetch('/api/export/docx',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({script:document.getElementById('scriptIn').value, voices:VOICES, title:document.title||'剧本'})});
+  if(!res.ok){ alert('导出失败'); return; }
+  const blob = await res.blob();
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=(document.title||'剧本')+'.docx'; a.click();
+}
+
+/* ---------- 用我自己的声音（克隆） ---------- */
+let CLONE = {ref:null, engine:'voxcpm'};
+let REC = {mr:null, chunks:[], t0:0, timer:null};
+
+async function uploadBlob(blob, filename, opts){
+  const msg = document.getElementById('cloneMsg');
+  busyStart(6);
+  let d = null;
+  try{
+    const b64 = await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(blob);});
+    const res = await fetch('/api/clone/upload',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filename, data:b64, denoise:true})});
+    d = await res.json();
+    if(!res.ok){
+      const why = d.error || '这个文件读不了';
+      msg.textContent = why;
+      if(opts && opts.onFail) opts.onFail(why);
+      return null;
+    }
+  }catch(e){
+    busyDone();
+    const why = '传不上去：' + (e.message || e);
+    msg.textContent = why;
+    if(opts && opts.onFail) opts.onFail(why);
+    return null;
+  }
+  busyDone();
+  CLONE.ref = d.ref;
+  CLONE.url = d.url;
+  if(!(opts && opts.quiet)) CLONE.engine = 'voxcpm';   // 自己录的/选的，默认走本机
+  msg.textContent = '收到 ' + d.seconds + ' 秒' + (d.hint ? '：' + d.hint : '');
+  if(opts && opts.quiet) return d;      // 录音这条路：不自动播放、不挂播放器
+  document.getElementById('cloneBox').classList.remove('hidden');
+  const a = document.getElementById('cloneAudio');
+  a.src = d.url + '?t=' + Date.now();
+  await applySink(a);
+  a.play();
+  return d;
+}
+
+/* 录完之后弹出来问「这段能用吗」——真的弹，不塞在页面里 */
+let RECED = null;
+
+function recModalOpen(title, msg){
+  document.getElementById('rmTitle').textContent = title;
+  document.getElementById('rmMsg').innerHTML = msg;
+  document.getElementById('recModal').classList.remove('hidden');
+}
+function recModalClose(){
+  const a = document.getElementById('rmAudio');
+  try{ a.pause(); }catch(e){}
+  document.getElementById('recModal').classList.add('hidden');
+}
+/* 录成功了：弹出来，自动播一遍原声，让他听完再拍板 */
+function recReviewShow(up){
+  const secs = (typeof up === 'number') ? up : up.seconds;
+  RECED = {secs: secs, up: (typeof up === 'number') ? null : up};
+  document.getElementById('rmAccept').classList.remove('hidden');
+  document.getElementById('rmRedo').classList.remove('hidden');
+  document.getElementById('rmReplay').classList.remove('hidden');
+  document.getElementById('rmOk').classList.add('hidden');
+  const a = document.getElementById('rmAudio');
+  a.classList.remove('hidden');
+  const dnNote = (RECED.up && RECED.up.denoised)
+    ? '<br><span style="color:#8fd6ff">已经顺手降了一遍底噪。</span> ' +
+      '<a href="#" onclick="recToggleRaw();return false" id="rmRawLink">听一下没降的原声</a>' +
+      '（觉得降过了头就换回原声再存）'
+    : '';
+  recModalOpen('这段能用吗？',
+    '录了 <b>' + Number(secs).toFixed(1) + ' 秒</b>。先听一遍 —— 像你、没杂音，就点「就用这段」；不行就点「重录」。' + dnNote);
+  a.src = CLONE.url + '?t=' + Date.now();
+  // 先把输出声卡切好再播，否则前半句会从系统默认喇叭出来
+  (async()=>{
+    try{
+      await applySink(a);
+      a.currentTime = 0;
+      const pr = a.play();
+      if(pr && pr.catch) pr.catch(()=>{});    // 浏览器不让自动播也不报错，他点播放就是
+    }catch(e){}
+  })();
+}
+/* 出问题了：也弹出来，别只在角落里留一行小字（2026-10-30 用户反馈的核心） */
+function recToggleRaw(){
+  const a = document.getElementById('rmAudio');
+  const up = RECED.up;
+  if(!up || !a) return;
+  const link = document.getElementById('rmRawLink');
+  const onRaw = CLONE.url && CLONE.url.indexOf('upload_dn') < 0;
+  if(onRaw){
+    CLONE.url = up.url;            // 切回降噪后的
+    CLONE.ref = up.ref;
+    if(link) link.textContent = '听一下没降的原声';
+  }else{
+    CLONE.url = up.url_raw;        // 切到原声
+    CLONE.ref = 'upload_48k.wav';
+    if(link) link.textContent = '换回降噪后的';
+  }
+  a.src = CLONE.url + '?t=' + Date.now();
+  try{ a.currentTime = 0; const p = a.play(); if(p && p.catch) p.catch(()=>{}); }catch(e){}
+}
+
+function recFail(title, msg){
+  document.getElementById('rmAccept').classList.add('hidden');
+  document.getElementById('rmRedo').classList.add('hidden');
+  document.getElementById('rmOk').classList.remove('hidden');
+  document.getElementById('rmReplay').classList.add('hidden');
+  document.getElementById('rmAudio').classList.add('hidden');
+  recModalOpen(title, msg);
+}
+function recFailClose(){ recModalClose(); }
+function recReplay(){
+  const a = document.getElementById('rmAudio');
+  if(!a || !a.src) return;
+  try{ a.currentTime = 0; const p = a.play(); if(p && p.catch) p.catch(()=>{}); }catch(e){}
+}
+
+async function recAccept(){
+  recModalClose();
+  const card = await cloneSave();
+  if(card) document.getElementById('cloneMsg').textContent =
+    '存好了：' + card.id + ' 号 · ' + card.name + '，已经在下面的列表里。';
+}
+function recDiscard(){
+  recModalClose();
+  document.getElementById('cloneMsg').textContent = '这段丢掉了，可以重录。';
+}
+
+document.getElementById('cloneFile').onchange = async e => {
+  const f = e.target.files[0]; if(!f) return;
+  document.getElementById('cloneMsg').textContent = '正在读…';
+  await uploadBlob(f, f.name);
+  e.target.value = '';
+};
+
+const REC_MAX = 10;   // 秒，到点自动停
+
+/* ---------- 电平表（录音时告诉你有没有信号） ---------- */
+let METER = {ctx:null, an:null, raf:0};
+
+function buildMeter(n = 26){
+  const el = document.getElementById('meter');
+  if(!el) return;
+  el.innerHTML = Array.from({length:n}, () => '<div class="ml" style="flex:1;border-radius:2px;background:rgba(255,255,255,.12)"></div>').join('');
+}
+
+function _barColor(i, n){
+  return i < n * 0.62 ? '#49d17d' : (i < n * 0.86 ? '#ffcc4d' : '#ff6b5a');
+}
+
+function startMeter(stream){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = ctx.createMediaStreamSource(stream);
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    an.smoothingTimeConstant = 0.55;
+    src.connect(an);
+    const buf = new Uint8Array(an.frequencyBinCount);
+    const bars = [...document.querySelectorAll('#meter .ml')];
+    const n = bars.length;
+    METER.ctx = ctx; METER.an = an;
+    const tick = ()=>{
+      an.getByteFrequencyData(buf);
+      let sum = 0;
+      for(let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / buf.length) / 255;      // 0..1
+      const lvl = Math.min(1, rms * 3.4);
+      const lit = Math.round(lvl * n);
+      bars.forEach((b, i)=>{
+        const on = i < lit;
+        b.style.background = on ? _barColor(i, n) : 'rgba(255,255,255,.12)';
+      });
+      METER.raf = requestAnimationFrame(tick);
+    };
+    tick();
+  }catch(e){}
+}
+
+function stopMeter(){
+  if(METER.raf){ cancelAnimationFrame(METER.raf); METER.raf = 0; }
+  if(METER.ctx){ try{ METER.ctx.close(); }catch(e){} METER.ctx = null; }
+  document.querySelectorAll('#meter .ml').forEach(b=>b.style.background='rgba(255,255,255,.12)');
+}
+
+async function listMics(){
+  const sel = document.getElementById('micSel');
+  if(!sel) return;
+  try{
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const mics = devs.filter(d=>d.kind === 'audioinput');
+    if(!mics.length) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">系统默认麦克风</option>' +
+      mics.map((d,i)=>`<option value="${d.deviceId}">${esc(d.label || ('未命名输入 ' + (i+1) + ' · 点「刷新设备」授权'))}</option>`).join('');
+    if(cur) sel.value = cur;
+  }catch(e){}
+}
+
+async function refreshMics(){
+  const msg = document.getElementById('cloneMsg');
+  try{
+    const s = await navigator.mediaDevices.getUserMedia({audio:true});
+    s.getTracks().forEach(t=>t.stop());
+  }catch(e){
+    msg.textContent = '麦克风权限没给：' + (e.message||'');
+    return;
+  }
+  await listMics();
+  await listOuts();
+  const n = document.getElementById('micSel').options.length - 1;
+  const m = document.getElementById('outSel').options.length - 1;
+  msg.textContent = `找到 ${n} 个输入、${m} 个输出`;
+}
+
+listMics();
+listOuts();
+loadGloss();
+buildMeter();
+readInit();
+
+if(location.search.includes('selftest')){
+  setTimeout(()=>{
+    document.getElementById('readEdit').value = "这是一段普通话，用来看看排版。\n\n夜里风很大，窗子一直在响。";
+    readDeliver().then(()=>{
+      const b = READ.blocks[0];
+      b.pauses.push({at: 5, sec: 1.0});
+      b.spans.push({start: 7, end: 11, cid: null, instruct: '压低声音说'});
+      readRender();
+      if(location.search.includes('gen')) setTimeout(()=>readGenerate(), 800);
+    });
+  }, 800);
+}
+
+if(new URLSearchParams(location.search).get('tab')) showTab(new URLSearchParams(location.search).get('tab'));
+if(location.search.includes('menu')) setTimeout(()=>{document.getElementById('fmenu').style.display='block';},400);
+if(location.search.includes('demo')){
+  showTab('script');
+  document.getElementById('scriptIn').value = `广告旁白：小迪插件，一切皆是插件。
+〔阿达翻开任务单，声音压得很低〕
+阿达：这次的任务，先核对截图信息，整理汇总。
+小迪：没错老板。我当初的想法就是，他俩虽然笨，但正好用来干粗活。
+阿达：我明白你的顾虑。但能省就省。小奥，文字整理交给你。
+小奥：……那张图，我最开始……就想说，参数、好像不是96。`;
+  doParse().then(()=>{ VOICES[5]='哭腔，抽泣，声音碎'; renderLines(); });
+}
+
+</script>
+</body>
+</html>
