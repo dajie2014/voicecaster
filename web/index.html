@@ -1127,17 +1127,31 @@ function readPoll(){
 async function listOuts(){
   const sel = document.getElementById('outSel');
   if(!sel) return;
+  const m = document.getElementById('outMsg');
+  // 2026-11-02：说清楚是「哪一层」读不到 —— 以前一律说「浏览器读不到」，
+  // 实际最常见的是 App 缺麦克风声明（媒体接口整个关了），跟浏览器无关。
+  if(!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices){
+    if(m) m.textContent = '这个窗口没有媒体设备接口（App 缺麦克风权限声明）';
+    return;
+  }
+  if(typeof HTMLMediaElement.prototype.setSinkId !== 'function'){
+    if(m) m.textContent = '这个窗口不能指定输出设备（用系统默认输出就行）';
+    return;
+  }
   try{
     const devs = await navigator.mediaDevices.enumerateDevices();
     const outs = devs.filter(d=>d.kind === 'audiooutput');
-    if(!outs.length) return;
+    if(!outs.length){
+      if(m) m.textContent = '没读到输出设备';
+      return;
+    }
     const cur = sel.value;
     sel.innerHTML = '<option value="">系统默认输出</option>' +
       outs.map((d,i)=>`<option value="${d.deviceId}">${esc(d.label || ('输出 ' + (i+1)))}</option>`).join('');
     if(cur) sel.value = cur;
+    if(m) m.textContent = '';
   }catch(e){
-    const m = document.getElementById('outMsg');
-    if(m) m.textContent = '这个浏览器读不到输出设备';
+    if(m) m.textContent = '读不到输出设备：' + (e.message || e);
   }
 }
 
@@ -1630,6 +1644,8 @@ async function labLoadKept(hl){
                   title="送进 ACE Studio（按原速放在时间轴上）">→ ACE</button>
           <button onclick="sendTo('cubase','${esc(it.name)}',this)" style="padding:4px 10px;font-size:13px"
                   title="放进 Cubase 收件箱（在 MediaBay 里拖出来用）">→ Cubase</button>
+          <button onclick="sendTo('musio','${esc(it.name)}',this)" style="padding:4px 10px;font-size:13px"
+                  title="送进 Musio Studio：放在光标处，有句表就按句切开">→ Musio</button>
         </div>
       </div>`).join('') : '<div class="row"><div class="no"></div><div style="color:#999">还没有留下过</div></div>';
   }catch(e){}
@@ -1647,6 +1663,9 @@ async function sendTo(which, file, btn){
       if(which === 'cubase'){
         labProg(true, '已放进 Cubase 收件箱：' + (d.folder || '') +
           ' —— 在 Cubase 的 MediaBay 里收藏这个文件夹，拖一下就能用', 100);
+      }else if(which === 'musio'){
+        labProg(true, '已送进 Musio Studio' + (d.cuts ? '，按句切成 ' + d.cuts + ' 段' : '')
+          + (d.out ? '（' + d.out + '）' : ''), 100);
       }else{
         labProg(true, '已送进 ' + (which === 'live' ? 'Live' : 'ACE Studio') + (d.out ? '（' + d.out + '）' : ''), 100);
       }
@@ -2055,6 +2074,10 @@ async function pickPptx(){
 }
 
 async function loadPptxFile(f){
+  if(!/\.pptx$/i.test(f.name||'')){
+    document.getElementById('pptMsg').textContent = '这个不是 .pptx：' + (f.name||'');
+    return false;
+  }
   document.getElementById('pptMsg').textContent = '正在读课件…';
   busyStart(25);
   const b64 = await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(f);});
@@ -2062,26 +2085,26 @@ async function loadPptxFile(f){
     body:JSON.stringify({name:f.name.replace(/\.pptx$/i,''), data:b64})});
   const d = await res.json();
   busyDone();
-  if(!res.ok){ document.getElementById('pptMsg').textContent='读失败：'+(d.error||res.status); return; }
+  if(!res.ok){ document.getElementById('pptMsg').textContent='读失败：'+(d.error||res.status); return false; }
   PPT.name = d.name; PPT.pages = d.pages; PPT.existing = d.existing || {};
   try{ localStorage.setItem('vc_ppt_last', d.name); }catch(e){}
   refreshPptList();
   renderPpt();
   document.getElementById('pptMsg').textContent =
     '读了 ' + d.pages.length + ' 页；做完全部之后可以直接写回你刚选的这份。';
+  return true;
 }
 
 document.getElementById('pptxFile').onchange = async e => {
   const f = e.target.files[0]; if(!f) return;
   PPT_HANDLE = null;                 // 走老路拿不到句柄，保存时还得问
-  await loadPptxFile(f);
-  renderPpt();
-  const canBuild = d.pages.some(p=>p.sentences.length);
-  document.getElementById('pptBuildBtn').disabled = !canBuild;
-  const pb = document.getElementById('pptPatchBtn');
-  if(pb) pb.disabled = !canBuild;
-  document.getElementById('pptMsg').textContent = '读了 ' + d.pages.length + ' 页';
+  const ok = await loadPptxFile(f);
   e.target.value = '';
+  if(!ok) return;
+  const canBuild = (PPT.pages||[]).some(p=>Array.isArray(p.sentences) && p.sentences.length);
+  const bb = document.getElementById('pptBuildBtn'); if(bb) bb.disabled = !canBuild;
+  const pb = document.getElementById('pptPatchBtn'); if(pb) pb.disabled = !canBuild;
+  document.getElementById('pptMsg').textContent = '读了 ' + (PPT.pages||[]).length + ' 页';
 };
 
 function renderPpt(){
@@ -2289,6 +2312,22 @@ async function doPptBuild(patchOnly){
          if(patchBtn) patchBtn.disabled=false; }
 }
 
+/* 活儿干完了，喊一声：把我弹到前面来。
+   App 壳（voicecaster-app/main.swift）注册了 window.webkit.messageHandlers.vc，
+   收到 raise 就激活窗口、Dock 跳一下、响一声。浏览器里只能挂个标题记号 + 试着抢焦点
+   （浏览器不允许网页强制拉窗口，这是它管着的）。 */
+function notifyAppDone(title){
+  try{
+    const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.vc;
+    if(h){ h.postMessage({cmd:'raise', title}); return; }
+  }catch(e){}
+  try{ document.title = '✅ ' + title + ' — VoiceCaster'; }catch(e){}
+  try{ window.focus(); }catch(e){}
+  document.addEventListener('visibilitychange', function once(){
+    if(!document.hidden){ document.title = 'VoiceCaster'; document.removeEventListener('visibilitychange', once); }
+  });
+}
+
 /* ---------- 做完之后：直接写回原来的位置 ---------- */
 /* 全部做完：一页一行，点「听」听这一页，不对就「重做这页」（只重做这一页） */
 function pptDoneOpen(msg){
@@ -2446,6 +2485,7 @@ async function pollPpt(tid){
       if(r.ok){ PPT.existing = d2.existing || {}; renderPpt(); }
     }catch(e){}
     pptDoneOpen(t.msg || '');       // 弹窗：逐页听 / 重做这一页 / 存哪儿
+    notifyAppDone('PPT 讲解做完了'); // 窗口自己跳到最前面（App 壳里）
   } else {
     document.getElementById('pptPmsg').textContent = t.msg || '出错了';
   }
@@ -3397,6 +3437,14 @@ async function poll(){
            <option value="m4a">M4A（更小，手机友好）</option>
            <option value="wav">WAV（混音母版）</option>
          </select>
+         <select id="packTracks" title="按角色分轨：每个角色单独一条，方便进 DAW 各调各的"
+                 style="font:15px inherit;padding:7px 10px;border-radius:9px;
+                 border:1px solid var(--line);background:rgba(255,255,255,.07);color:var(--ink)">
+           <option value="none">不分轨（只要分句 + 整段）</option>
+           <option value="compact">分轨：紧凑版（只留他的话，串起来）</option>
+           <option value="aligned">分轨：对齐版（和整部一样长，话在原位）</option>
+           <option value="both">分轨：两个都要</option>
+         </select>
          <button class="go" onclick="exportPack()">导出包</button>
          <span id="packMsg" style="color:#666;font-size:13px"></span>
        </div>
@@ -3431,14 +3479,61 @@ async function exportPack(){
   const files = (window.__lastFiles||[]).map(f=>f.name);
   if(!files.length){ alert('先排演一遍'); return; }
   const fmt = document.getElementById('packFmt').value;
+  const trSel = document.getElementById('packTracks');
+  const tracks = trSel ? trSel.value : 'none';
   const msg = document.getElementById('packMsg');
-  msg.textContent = '正在转格式、写清单…';
+  msg.textContent = (tracks === 'none' ? '正在转格式、写清单…'
+                    : '正在转格式、写清单，再按角色分轨…');
   const res = await fetch('/api/export/package',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name:document.title||'导出包', files, lines:LINES, format:fmt, srt:true, marks:MARKS})});
+    body:JSON.stringify({name:document.title||'导出包', files, lines:LINES, format:fmt,
+                         srt:true, marks:MARKS, tracks})});
   const d = await res.json();
   if(!res.ok){ msg.textContent = d.error || '导出失败'; return; }
-  msg.textContent = `好了：${d.count} 条，共 ${d.seconds} 秒`;
+  if(d.tracks && d.tracks.length){
+    msg.innerHTML = `好了：${d.count} 条，共 ${d.seconds} 秒，另按角色分出 ${d.tracks.length} 条轨
+      <button onclick="sendTracksTo('ace','${esc(d.dir)}', this)"
+              title="每个角色进 ACE 一条轨，轨上按「连续说的话」切成一块一块，位置和原来一样"
+              style="margin-left:8px;padding:6px 12px;border-radius:8px;border:1px solid var(--line);
+                     background:rgba(143,214,255,.14);color:var(--ink);cursor:pointer;font:inherit;font-size:13px">
+        → 按角色送进 ACE</button>
+      <button onclick="sendTracksTo('live','${esc(d.dir)}', this)"
+              title="每个角色进 Live 一条轨，轨上是一条一条的片段，位置回到原来的秒数"
+              style="margin-left:6px;padding:6px 12px;border-radius:8px;border:1px solid var(--line);
+                     background:rgba(200,255,120,.14);color:var(--ink);cursor:pointer;font:inherit;font-size:13px">
+        → 按角色送进 Live</button>`;
+  }else{
+    msg.textContent = `好了：${d.count} 条，共 ${d.seconds} 秒`;
+  }
   location.href = d.url;
+}
+
+/* 把「按角色」分轨结果送进 DAW：ACE 或 Live，一角色一轨、轨上是一块一块
+   （用户 2026-11-02 要的；两边走同一份片段清单） */
+async function sendTracksTo(which, dir, btn){
+  const label = which === 'live' ? 'Live' : 'ACE';
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '送进 ' + label + ' 中…';
+  try{
+    const res = await fetch('/api/send/' + which + '-tracks',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({dir})});
+    const d = await res.json();
+    if(res.ok){
+      btn.textContent = '✓ 已送进';
+      const msg = document.getElementById('packMsg');
+      if(msg) msg.innerHTML = `送进 ${label} 了：${esc(d.summary || '')}` +
+        (d.errors && d.errors.length
+          ? `<div style="color:#e8a;font-size:12.5px;margin-top:6px">有 ${d.errors.length} 处没成：${esc(d.errors.slice(0,3).join('；'))}</div>`
+          : '');
+    }else{
+      btn.textContent = '✗ 没送进去';
+      const msg = document.getElementById('packMsg');
+      if(msg) msg.textContent = d.error || (label + ' 没收下');
+    }
+  }catch(e){
+    btn.textContent = '✗ 出错';
+  }finally{
+    setTimeout(()=>{ btn.textContent = old; btn.disabled = false; }, 4000);
+  }
 }
 
 /* ---------- 文件菜单 ---------- */
@@ -3732,24 +3827,47 @@ function stopMeter(){
 async function listMics(){
   const sel = document.getElementById('micSel');
   if(!sel) return;
+  // 2026-11-02：以前这里把异常整个吞掉（catch(e){}），所以 App 缺麦克风声明时
+  // 下拉框只有一条「系统默认麦克风」，点了「刷新设备」也毫无反应、不报错。
+  // 现在读不到设备要出声。
+  if(!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices){
+    const m = document.getElementById('cloneMsg');
+    if(m) m.textContent = '这个窗口读不到麦克风。App 需要「麦克风权限声明」，或者在系统设置里把 VoiceCaster 的麦克风打开。';
+    return;
+  }
   try{
     const devs = await navigator.mediaDevices.enumerateDevices();
     const mics = devs.filter(d=>d.kind === 'audioinput');
-    if(!mics.length) return;
+    if(!mics.length){
+      const m = document.getElementById('cloneMsg');
+      if(m) m.textContent = '没有找到麦克风设备。确认一下麦克风插着、系统里没被别的软件独占。';
+      return;
+    }
     const cur = sel.value;
     sel.innerHTML = '<option value="">系统默认麦克风</option>' +
       mics.map((d,i)=>`<option value="${d.deviceId}">${esc(d.label || ('未命名输入 ' + (i+1) + ' · 点「刷新设备」授权'))}</option>`).join('');
     if(cur) sel.value = cur;
-  }catch(e){}
+  }catch(e){
+    const m = document.getElementById('cloneMsg');
+    if(m) m.textContent = '读不到麦克风设备：' + (e.message || e);
+  }
 }
 
 async function refreshMics(){
   const msg = document.getElementById('cloneMsg');
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    msg.textContent = '这个窗口没有录音接口。App 的麦克风权限声明缺失，需要在系统设置 → 隐私与安全性 → 麦克风里允许 VoiceCaster。';
+    return;
+  }
   try{
     const s = await navigator.mediaDevices.getUserMedia({audio:true});
     s.getTracks().forEach(t=>t.stop());
   }catch(e){
-    msg.textContent = '麦克风权限没给：' + (e.message||'');
+    const nm = e && e.name ? e.name : '';
+    const tip = nm === 'NotAllowedError' ? '（系统里拒绝了麦克风权限：系统设置 → 隐私与安全性 → 麦克风，把 VoiceCaster 打开）'
+              : nm === 'NotFoundError' ? '（没有检测到麦克风设备）'
+              : nm === 'NotReadableError' ? '（麦克风被别的软件占用了）' : '';
+    msg.textContent = '麦克风打不开：' + ((e && e.message) || nm || '不知道原因') + ' ' + tip;
     return;
   }
   await listMics();

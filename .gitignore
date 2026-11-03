@@ -1,12 +1,11 @@
-.venv/
 __pycache__/
 *.pyc
-.DS_Store
-
-# 个人数据：声音参考、生成结果、工程文件，绝不入库
-characters/
+.uvcache/
+.probe/
 output/
-projects/
-demo/
+VoiceCaster.app/
 *.wav
-*.bak-*
+*.mp3
+*.flac
+*.m4a
+.DS_Store

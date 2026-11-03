@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>VoiceCaster · 剧本</title>
+<style>
+  :root { --bg:#f6f6f7; --card:#fff; --line:#e3e3e6; --ink:#1d1d1f; --mute:#86868b; --accent:#e8710a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.7 -apple-system,"PingFang SC","Helvetica Neue",sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:28px 20px 120px; }
+  h1 { font-size:20px; margin:0 0 4px; letter-spacing:.2px; }
+  .sub { color:var(--mute); font-size:13px; margin-bottom:22px; }
+  .tabs { display:flex; gap:22px; border-bottom:1px solid var(--line); margin-bottom:18px; }
+  .tabs b { padding:8px 0; font-weight:600; color:var(--accent); border-bottom:2px solid var(--accent); }
+  .tabs span { padding:8px 0; color:var(--mute); }
+  .list { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .row { display:grid; grid-template-columns:34px 1fr; gap:10px; padding:11px 16px; border-top:1px solid var(--line); cursor:default; }
+  .row:first-child { border-top:none; }
+  .row:hover { background:#fffaf3; }
+  .no { color:#b9b9be; font-size:12px; text-align:right; padding-top:3px; }
+  .who { font-weight:600; font-size:13px; color:#55555a; }
+  .said { font-size:15px; }
+  .voice { display:inline-block; margin-top:5px; font-size:12px; color:#b25c00;
+           background:#fff3e3; border:1px solid #ffe0bd; border-radius:6px; padding:1px 7px; }
+  .hint { margin-top:16px; color:var(--mute); font-size:13px; }
+  .hint b { color:#444; font-weight:600; }
+
+  /* 右键菜单 */
+  #menu { position:fixed; display:none; background:#fff; border:1px solid var(--line);
+          border-radius:9px; box-shadow:0 8px 28px rgba(0,0,0,.13); padding:5px; z-index:50; min-width:190px; }
+  #menu div { padding:8px 11px; border-radius:6px; font-size:14px; cursor:pointer; }
+  #menu div:hover { background:var(--accent); color:#fff; }
+
+  /* 弹窗 */
+  #mask { position:fixed; inset:0; background:rgba(0,0,0,.28); display:none; z-index:60;
+          align-items:center; justify-content:center; }
+  #dlg { width:520px; background:#fff; border-radius:14px; padding:22px 22px 18px; box-shadow:0 20px 60px rgba(0,0,0,.22); }
+  #dlg h2 { margin:0 0 2px; font-size:16px; }
+  #dlg .quote { color:var(--mute); font-size:13px; margin-bottom:14px; }
+  #dlg textarea { width:100%; height:74px; resize:vertical; padding:10px 12px; font:15px/1.6 inherit;
+                  border:1px solid var(--line); border-radius:9px; outline:none; }
+  #dlg textarea:focus { border-color:var(--accent); }
+  .tips { margin:12px 0 16px; font-size:12.5px; color:var(--mute); line-height:2; }
+  .tips i { font-style:normal; color:#b25c00; background:#fff3e3; border-radius:5px; padding:1px 6px; cursor:pointer; }
+  .warn { color:#c0392b; }
+  .sliders { margin:14px 0 6px; }
+  .sl { display:grid; grid-template-columns:64px 1fr; align-items:center; gap:10px; margin:9px 0; font-size:13px; color:#55555a; }
+  .sl input { -webkit-appearance:none; height:4px; border-radius:3px; background:#e3e3e6; outline:none; }
+  .sl input::-webkit-slider-thumb { -webkit-appearance:none; width:18px; height:18px; border-radius:50%;
+        background:var(--accent); border:3px solid #fff; box-shadow:0 0 0 1px #e3e3e6; cursor:pointer; }
+  .preview { margin:10px 0 14px; padding:9px 12px; background:#faf7f2; border:1px dashed #e8d5bb;
+             border-radius:9px; font-size:13px; color:#7a5a2e; min-height:38px; }
+  .preview b { color:#b25c00; }
+  .btns { display:flex; justify-content:flex-end; gap:10px; }
+  button { font:14px inherit; padding:7px 16px; border-radius:8px; border:1px solid var(--line);
+           background:#fff; cursor:pointer; }
+  button.go { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>VoiceCaster</h1>
+  <div class="sub">剧本 · 《我的员工都要过日子》</div>
+  <div class="tabs"><span>角色</span><b>剧本</b></div>
+
+  <div class="list" id="list"></div>
+
+  <div class="hint">
+    <b>右键任意一句</b>，就能给这一句单独加说话的声音。没加的就按角色的基础声线念。
+  </div>
+</div>
+
+<div id="menu"><div id="mi">给这句加说话声音</div></div>
+
+<div id="mask">
+  <div id="dlg">
+    <h2 id="dt">第 3 句 · 阿达</h2>
+    <div class="quote" id="dq">「我明白你的顾虑。但能省就省。」</div>
+    <textarea id="dv" placeholder="例：声音压得很低，说得很慢，像在忍着"></textarea>
+    <div class="sliders">
+      <div class="sl"><span>语速</span><input type="range" id="rSpeed" min="0" max="100" value="50"></div>
+      <div class="sl"><span>力度</span><input type="range" id="rForce" min="0" max="100" value="50"></div>
+    </div>
+    <div class="preview" id="preview">最终交给模型：<b>（还没写）</b></div>
+    <div class="tips">
+      <b>能用的写法</b>（点一下就填进去）：<br>
+      <i>声音压得很低，气声，贴着话筒</i>
+      <i>声音变远，像从门外传来</i>
+      <i>说得很慢，一字一句</i>
+      <i>声音发抖，气息不稳</i>
+      <i>哭腔，抽泣，声音碎</i>
+      <br><span class="warn">别写：怒吼 / 大喊 / 尖叫</span>（会崩，出来一串哼声）
+      &nbsp;·&nbsp; <span class="warn">也别写：大声 / 小声</span>（它不听，音量留给后期）
+    </div>
+    <div class="btns">
+      <button onclick="closeDlg(false)">取消</button>
+      <button class="go" onclick="closeDlg(true)">用这句声音</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const LINES = [
+  ["广告旁白","小迪插件，一切皆是插件。冷静推理，高效响应，近乎自动化的无敌工作流程。"],
+  ["阿达","这次的任务，先核对截图信息，整理汇总。咱们优先让他俩上手，尽量控制成本。"],
+  ["小迪","没错老板。我当初的想法就是，他俩虽然笨，但正好用来干粗活。"],
+  ["阿达","我明白你的顾虑。但能省就省。小奥，文字整理交给你。"],
+  ["小奥","……那张图，我最开始……就想说，参数、好像不是96。"],
+  ["阿碧","放心吧老板，没问题老板！核对完成，截图参数是96。"],
+  ["小迪","等我核一下，等我再跑一次。他们这种基础粗核对，我放心不下，容错太低。"],
+];
+const voices = {};          // 句号 -> 声音描述
+let curRow = null;
+
+function render(){
+  document.getElementById('list').innerHTML = LINES.map(([who,said],i)=>{
+    const n=i+1, v=voices[n];
+    return `<div class="row" data-n="${n}">
+      <div class="no">${n}</div>
+      <div><div class="who">${who}</div><div class="said">${said}</div>
+      ${v?`<div class="voice">🔊 ${v}</div>`:''}</div></div>`;
+  }).join('');
+  document.querySelectorAll('.row').forEach(r=>{
+    r.addEventListener('contextmenu',e=>{
+      e.preventDefault(); curRow=+r.dataset.n; openMenu(e.clientX,e.clientY);
+    });
+  });
+}
+
+function openMenu(x,y){
+  const m=document.getElementById('menu');
+  m.style.display='block';
+  m.style.left=Math.min(x, innerWidth-220)+'px';
+  m.style.top=Math.min(y, innerHeight-70)+'px';
+}
+function openDlg(n){
+  const [who,said]=LINES[n-1];
+  document.getElementById('dt').textContent=`第 ${n} 句 · ${who}`;
+  document.getElementById('dq').textContent=`「${said}」`;
+  document.getElementById('dv').value=voices[n]||'';
+  document.getElementById('rSpeed').value=50;
+  document.getElementById('rForce').value=50;
+  compose();
+  document.getElementById('mask').style.display='flex';
+  document.getElementById('dv').focus();
+}
+function closeDlg(save){
+  if(save){
+    const v=compose()||'';
+    if(v) voices[curRow]=v; else delete voices[curRow];
+    render();
+  }
+  document.getElementById('mask').style.display='none';
+}
+document.getElementById('mi').onclick=()=>{
+  document.getElementById('menu').style.display='none';
+  openDlg(curRow);
+};
+document.addEventListener('click',e=>{
+  if(!e.target.closest('#menu')) document.getElementById('menu').style.display='none';
+});
+function speedWord(v){
+  if(v<22) return '说得很慢，一字一句';
+  if(v<40) return '说得偏慢';
+  if(v>78) return '说得偏快';
+  if(v>60) return '语速略快';
+  return '';
+}
+function forceWord(v){
+  if(v<22) return '声音压得很低，气声，几乎听不见';
+  if(v<40) return '声音放轻';
+  if(v>78) return '气息很重，声音发紧，咬着牙说';
+  if(v>60) return '语气加重';
+  return '';
+}
+function compose(){
+  const hand=document.getElementById('dv').value.trim();
+  const parts=[];
+  if(hand) parts.push(hand);
+  const sp=speedWord(+document.getElementById('rSpeed').value);
+  const fo=forceWord(+document.getElementById('rForce').value);
+  if(sp) parts.push(sp);
+  if(fo) parts.push(fo);
+  const out=parts.join('，');
+  document.getElementById('preview').innerHTML =
+    '最终交给模型：<b>'+(out? ('中年男人，中音，'+out) : '（没加东西，就是角色本来的声音）')+'</b>';
+  return out;
+}
+['rSpeed','rForce','dv'].forEach(id=>{
+  const el=document.getElementById(id);
+  el.addEventListener('input',compose);
+});
+
+document.querySelectorAll('.tips i').forEach(el=>{
+  el.onclick=()=>{ document.getElementById('dv').value=el.textContent; };
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){ document.getElementById('menu').style.display='none'; closeDlg(false); }
+});
+
+render();
+// 截图/演示用：?demo=menu 自动把右键菜单打开，?demo=dlg 自动开弹窗
+if(location.search.includes('demo=menu')){ setTimeout(()=>openMenu(360,300),400); }
+if(location.search.includes('demo=dlg')){ curRow=4; setTimeout(()=>{openDlg(4);
+  document.getElementById('rSpeed').value=12; document.getElementById('rForce').value=15;
+  document.getElementById('dv').value='像在忍着'; compose();},400); }
+</script>
+</body>
+</html>

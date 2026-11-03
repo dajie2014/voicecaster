@@ -752,11 +752,20 @@ def run_rehearse(tid, text, voices, section="", marks=None):
             outs.append(p)
             raws.append(wav)          # 整段用它拼，不带前置静音
         chunks, gap = [], np.zeros(int(0.4 * SR), dtype=np.float32)
+        # ★ 2026-11-03：记下每句在整段里的起点（送 Musio 时按这些点切片）
+        starts, pos = [], 0.0
         for a in raws:
+            starts.append(round(pos, 3))
+            pos += len(a) / float(SR) + 0.4
             chunks += [a, gap]
         full = np.concatenate(chunks[:-1])
         final = os.path.join(OUTDIR, ("分场_" + _safe(section).replace(" ", "_") + ".wav") if section else "整段.wav")
         sf.write(final, full, SR)
+        try:
+            with open(final + ".sentences.json", "w", encoding="utf-8") as fh:
+                json.dump({"starts": starts, "gap": 0.4, "sr": SR}, fh, ensure_ascii=False)
+        except Exception:
+            pass
         files = [{"name": os.path.basename(f),
                   "url": "/api/audio/output/" + os.path.basename(f)} for f in outs]
         t.update(state="done", msg=f"排演完成：{len(lines)} 句", progress=1.0,
@@ -1749,6 +1758,27 @@ class PackIn(BaseModel):
     format: str = "mp3"
     srt: bool = True
     marks: dict = {}          # 视频打点：{"句号": 秒}
+    # 2026-11-02 用户定：按角色分轨，**让用户自己选**，不替他定
+    #   none    不分轨（默认，跟以前一样）
+    #   compact 紧凑版：只留这个角色的话，挨着串起来
+    #   aligned 对齐版：每条轨和整部一样长，话落在原来的时间点上
+    #   both    两个都出
+    tracks: str = "none"
+
+
+def _track_label(fname, ln):
+    """从分句文件名里认出「几号 · 谁」——文件名是排演时定死的，最可信。
+
+    形如 001_1号_达老师v2.wav → "1号_达老师v2"
+    认不出编号就退回剧本里的角色名。
+    """
+    base = os.path.splitext(os.path.basename(fname))[0]
+    parts = base.split("_")
+    if len(parts) >= 3 and parts[1].endswith("号"):
+        return parts[1] + "_" + "_".join(parts[2:])
+    if len(parts) >= 2 and parts[1].endswith("号"):
+        return parts[1]
+    return (ln.get("name") or "未命名")
 
 
 def _ts(sec):
@@ -1766,6 +1796,9 @@ def api_export_package(inp: PackIn):
     rows, subs = [], []
     t = 0.0
     idx = 0
+    # 2026-11-02：按角色分轨要用的料，边转码边记下来
+    # (角色标签, 起点秒, 时长秒, 句号)
+    per_line = []
     for f in inp.files:
         src = os.path.join(OUTDIR, os.path.basename(f))
         if not os.path.exists(src):
@@ -1789,6 +1822,7 @@ def api_export_package(inp: PackIn):
         stamp = _ts(inp.marks[no]) if inp.marks and no in inp.marks else "--"
         rows.append(f"{no_int:03d} | {who}：{what} | {stamp}")
         subs.append((t, t + sec, f"{who}：{what}".strip("：")))
+        per_line.append((_track_label(f, ln), t, sec, no_int))
         t += sec
 
     with open(os.path.join(d, "Manifest.txt"), "w", encoding="utf-8") as f:
@@ -1800,15 +1834,147 @@ def api_export_package(inp: PackIn):
             for i, (a, b, txt) in enumerate(subs, 1):
                 f.write(f"{i}\n{_srt_time(a)} --> {_srt_time(b)}\n{txt}\n\n")
 
+    # ---------- 按角色分轨（用户自己选要哪种，不替他定） ----------
+    track_names = []
+    want = (inp.tracks or "none").strip().lower()
+    if want in ("compact", "aligned", "both") and per_line:
+        track_names = _write_role_tracks(d, per_line, t, want, fmt)
+
     if idx == 0:
         return JSONResponse({"error": "一条音频都没找到，先排演一遍再导出"}, status_code=400)
     zpath = os.path.join(EXPORTDIR, _safe(inp.name) + ".zip")
     with _zip.ZipFile(zpath, "w", _zip.ZIP_DEFLATED) as z:
         for n in sorted(os.listdir(d)):
-            z.write(os.path.join(d, n), n)
+            p = os.path.join(d, n)
+            if os.path.isdir(p):
+                for m in sorted(os.listdir(p)):          # 按角色/ 里面的也要进 zip
+                    z.write(os.path.join(p, m), os.path.join(n, m))
+            else:
+                z.write(p, n)
     return {"ok": True, "count": idx, "seconds": round(t, 2),
             "dir": os.path.basename(d),
+            "tracks": track_names,
             "url": "/api/export/download/" + _safe(inp.name)}
+
+
+def _write_role_tracks(d, per_line, total, want, fmt):
+    """同一个角色的句子挑出来，做成一条轨。用户 2026-11-02 要的。
+
+    compact 只留他的话，挨着串起来 —— 单独听、单独检查气口用；
+    aligned 每条轨和整部一样长，他的话落在原来的时间点上 ——
+            几条一起拖进 DAW，位置不用挪，叠起来就是完整的一出戏。
+    ⚠️ 对齐版按整数采样数放位置，避免浮点误差让轨与轨错开几个采样。
+    """
+    from collections import OrderedDict
+    groups = OrderedDict()
+    for label, start, sec, no_int in per_line:
+        groups.setdefault(label, []).append((start, sec, no_int))
+
+    tdir = os.path.join(d, "按角色")
+    os.makedirs(tdir, exist_ok=True)
+    out_names, notes = [], ["# 按角色分轨", ""]
+    sr = 48000
+    total_int = int(round(total * sr))
+
+    for label, items in groups.items():
+        safe = _safe(label).replace("/", "_")
+        # ---- 紧凑版 ----
+        if want in ("compact", "both"):
+            chunks, used = [], []
+            for start, sec, no_int in items:
+                src = os.path.join(d, f"{no_int:03d}.{fmt}")
+                if not os.path.exists(src):
+                    continue
+                data, _ = sf.read(src, dtype="float32")
+                if data.ndim > 1:
+                    data = data.mean(axis=1)
+                chunks.append(data); used.append(no_int)
+            if chunks:
+                merged = np.concatenate(chunks)
+                name = f"紧凑_{safe}.{fmt}"
+                _write_audio(os.path.join(tdir, name), merged, sr, fmt)
+                out_names.append("按角色/" + name)
+                notes.append(f"紧凑_{safe}：{len(used)} 句、{len(merged)/sr:.1f} 秒，"
+                             "第 " + "、".join(f"{n:03d}" for n in used) + " 句")
+        # ---- 对齐版 ----
+        if want in ("aligned", "both"):
+            track = np.zeros(total_int, dtype="float32")
+            placed = 0
+            for start, sec, no_int in items:
+                src = os.path.join(d, f"{no_int:03d}.{fmt}")
+                if not os.path.exists(src):
+                    continue
+                data, _ = sf.read(src, dtype="float32")
+                if data.ndim > 1:
+                    data = data.mean(axis=1)
+                a = int(round(start * sr))
+                b = min(a + len(data), total_int)
+                if b > a:
+                    track[a:b] += data[:b - a]
+                    placed += 1
+            if placed:
+                name = f"对齐_{safe}.{fmt}"
+                _write_audio(os.path.join(tdir, name), track, sr, fmt)
+                out_names.append("按角色/" + name)
+                notes.append(f"对齐_{safe}：{placed} 句、全长 {total_int/sr:.1f} 秒"
+                             "（和整部一样长，话在原来的位置上）")
+
+    with open(os.path.join(tdir, "分轨说明.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(notes) + "\n")
+        f.write("\n对齐版：几条轨一起拖进 DAW，位置不用挪，叠起来就是完整的一出戏。\n")
+        f.write("紧凑版：只有这个角色的话，一句接一句，适合单独听、单独检查。\n")
+
+    # 2026-11-02 用户要的：送进 ACE Studio 时，一个角色一条轨，
+    # 但轨上要**变成一块一块**（连续说的合成一块），位置保持原样。
+    # 把片段算好存下来，送的时候直接照着放，不用再猜哪儿是静音。
+    pieces = {"total": round(total_int / sr, 2), "roles": []}
+    for label, items in groups.items():
+        safe = _safe(label).replace("/", "_")
+        segs = _merge_segments(items)          # [[起点秒, 时长秒], ...]
+        if not segs:
+            continue
+        pieces["roles"].append({
+            "label": label,
+            "safe": safe,
+            "aligned": f"对齐_{safe}.{fmt}",
+            "segments": [[round(a, 3), round(b, 3)] for a, b in segs],
+        })
+    try:
+        with open(os.path.join(tdir, "片段.json"), "w", encoding="utf-8") as f:
+            json.dump(pieces, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+    return out_names
+
+
+def _merge_segments(items, gap=0.4):
+    """同一角色的句子，间隔小于 gap 秒的算「连着说」，合成一块。
+
+    用户 2026-11-02 定：颗粒度是「连续说的合成一块」，不是一句一块。
+    """
+    items = sorted(items, key=lambda x: x[0])
+    segs = []
+    for start, sec, _no in items:
+        if segs and start - (segs[-1][0] + segs[-1][1]) <= gap:
+            segs[-1][1] = start + sec - segs[-1][0]      # 拉长到盖住这一句
+        else:
+            segs.append([start, sec])
+    return segs
+
+
+def _write_audio(path, data, sr, fmt):
+    """写一条分轨。wav 直接落；mp3 / m4a 先落临时 wav 再转。"""
+    if fmt == "wav":
+        sf.write(path, data, sr)
+        return
+    tmp = path + ".tmp.wav"
+    sf.write(tmp, data, sr)
+    _sp.run([FFMPEG, "-y", "-i", tmp, *_ff_args(fmt), path],
+            capture_output=True, text=True)
+    try:
+        os.remove(tmp)
+    except Exception:
+        pass
 
 
 @app.get("/api/export/download/{name}")
@@ -2067,6 +2233,179 @@ def api_send_ace(inp: SendIn):
         return JSONResponse({"error": "ACE 没收下：" + ((r.stderr or r.stdout or "")[-400:])},
                             status_code=500)
     return {"ok": True, "out": (r.stdout or "").strip()[-400:]}
+
+
+# ================= 送到 Musio Studio =================
+# 2026-11-03：整段放在 Studio 的光标处；有句表（整段.wav.sentences.json）就按句切开。
+MUSIO_BRIDGE = os.path.normpath(os.path.join(BASE, "..", "musio-bridge", "musio_bridge.py"))
+
+
+@app.post("/api/send/musio")
+def api_send_musio(inp: SendIn):
+    p = _send_path(inp)
+    if not os.path.exists(p):
+        return JSONResponse({"error": "找不到这个音频"}, status_code=404)
+    if not os.path.exists(MUSIO_BRIDGE):
+        return JSONResponse({"error": "找不到 Musio 桥：" + MUSIO_BRIDGE}, status_code=500)
+    splits = []
+    meta = p + ".sentences.json"
+    if os.path.exists(meta):
+        try:
+            starts = json.load(open(meta, encoding="utf-8")).get("starts") or []
+            splits = starts[1:]          # 第一句从 0 秒起，不用切
+        except Exception:
+            splits = []
+    args = [_sys.executable, MUSIO_BRIDGE, "send-audio", "--path", p,
+            "--track", inp.track or "VoiceCaster"]
+    if splits:
+        args += ["--split", ",".join(str(x) for x in splits)]
+    try:
+        r = _sp.run(args, capture_output=True, text=True, timeout=180)
+    except _sp.TimeoutExpired:
+        return JSONResponse({"error": "Musio 没回话：Studio 开着吗？设置 → Agents 打开了吗？"},
+                            status_code=504)
+    if r.returncode != 0:
+        return JSONResponse({"error": "Musio 没收下：" + ((r.stderr or r.stdout or "")[-400:])},
+                            status_code=500)
+    return {"ok": True, "out": (r.stdout or "").strip()[-400:], "cuts": len(splits)}
+
+
+class AceTracksIn(BaseModel):
+    dir: str = ""          # 导出包目录名，output/export/<dir> 里有「按角色/片段.json」
+
+
+@app.post("/api/send/ace-tracks")
+def api_send_ace_tracks(inp: AceTracksIn):
+    """把「按角色分轨」的结果送进 ACE Studio，每个角色一条轨，轨上是一块一块的。
+
+    用户 2026-11-02 的想法：既然能按角色对齐时间线，就让 ACE 自动切成块，
+    空着的地方不占位，每块还能单独拖。
+    - 一个角色 = 一条 audio 轨；
+    - 连续说的话 = 一块（片段清单导出时就算好了，见 _merge_segments）；
+    - 每块仍停在原来的时间点上（--pos = --clip-in = 原起点）。
+    """
+    d = os.path.join(EXPORTDIR, _safe(inp.dir))
+    pj = os.path.join(d, "按角色", "片段.json")
+    if not os.path.exists(pj):
+        return JSONResponse({"error": "这个导出包里没有分轨信息——导出时把「分轨」选成紧凑/对齐/两个都要"}, status_code=400)
+    if not os.path.exists(ACE_CLI):
+        return JSONResponse({"error": "找不到 ACE Studio（没装？）"}, status_code=500)
+    with open(pj, encoding="utf-8") as f:
+        info = json.load(f)
+    env = dict(os.environ, ACESTUDIO_CLI_NO_AGENT_HINT="1")
+
+    done, errors = [], []
+    for role in info.get("roles", []):
+        src = os.path.join(d, "按角色", role.get("aligned", ""))
+        if not os.path.exists(src):
+            errors.append(f"{role.get('label')}：包里没有 {role.get('aligned')}")
+            continue
+        try:
+            r = _sp.run([ACE_CLI, "track", "create", "--type", "audio",
+                         "--name", role.get("label", "角色"), "--json"],
+                        capture_output=True, text=True, env=env, timeout=90)
+            tu = json.loads(r.stdout)["trackUuid"]
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{role.get('label')}：建轨失败 {e}")
+            continue
+        clips = 0
+        for a, b in role.get("segments", []):
+            args = [ACE_CLI, "import", "file", "--path", src,
+                    "--track-uuid", tu,
+                    "--pos", "%.3fs" % float(a),
+                    "--clip-in", "%.3fs" % float(a),
+                    "--dur", "%.3fs" % float(b),
+                    "--on-occupied", "fail", "--json"]
+            try:
+                rr = _sp.run(args, capture_output=True, text=True, env=env, timeout=180)
+            except _sp.TimeoutExpired:
+                errors.append(f"{role.get('label')} 第 {clips+1} 块：ACE 没回话")
+                break
+            if rr.returncode == 0:
+                clips += 1
+            else:
+                errors.append(f"{role.get('label')} 第 {clips+1} 块："
+                              + ((rr.stderr or rr.stdout or "")[-120:]))
+        done.append({"label": role.get("label"), "track": tu, "clips": clips})
+
+    return {"ok": True, "roles": done, "errors": errors,
+            "summary": "、".join(f"{x['label']} {x['clips']} 块" for x in done)}
+
+
+class LiveTracksIn(BaseModel):
+    dir: str = ""
+
+
+@app.post("/api/send/live-tracks")
+def api_send_live_tracks(inp: LiveTracksIn):
+    """按角色送进 Ableton Live：一角色一轨，轨上是一块一块，位置回到原秒数。
+
+    2026-11-02 用户要的（跟送 ACE 同一套想法）。
+    Live 侧靠 Remote Script 的 pos_sec 支持：给了它，块就不再挨着排，
+    而是回到片段清单里记的那个秒数上（内部按当前工程速度换算成拍）。
+    """
+    d = os.path.join(EXPORTDIR, _safe(inp.dir))
+    pj = os.path.join(d, "按角色", "片段.json")
+    if not os.path.exists(pj):
+        return JSONResponse({"error": "这个导出包里没有分轨信息——导出时把「分轨」选上"}, status_code=400)
+    if not os.path.exists(PUSH_LIVE):
+        return JSONResponse({"error": "找不到 Live 桥脚本：" + PUSH_LIVE}, status_code=500)
+    with open(pj, encoding="utf-8") as f:
+        info = json.load(f)
+
+    done, errors = [], []
+    for role in info.get("roles", []):
+        src = os.path.join(d, "按角色", role.get("aligned", ""))
+        if not os.path.exists(src):
+            errors.append(f"{role.get('label')}：包里没有 {role.get('aligned')}")
+            continue
+        # 2026-11-02 实测结论：Live 那边**搬片段时会丢掉裁剪**
+        # （Session 里设好 7 秒，搬到编曲视图仍按源全长 98.6 秒算，
+        #  多块互相压短就成了首尾相接的长条）。
+        # ⇒ 这里先把每块切成独立小文件，文件本身多长，放上去就多长，不靠裁剪。
+        safe0 = _safe(role.get("label", "角色")).replace("/", "_")
+        segdir = os.path.join(d, "按角色", "片段文件")
+        os.makedirs(segdir, exist_ok=True)
+        secs = []
+        for i, ab in enumerate(role.get("segments", [])):
+            a, b = float(ab[0]), float(ab[1])
+            fn = os.path.join(segdir, "%s_块%02d.wav" % (safe0, i + 1))
+            rr = _sp.run([FFMPEG, "-y", "-ss", "%.3f" % a, "-t", "%.3f" % b,
+                          "-i", src, "-ar", "48000", "-ac", "1",
+                          "-c:a", "pcm_s16le", fn],
+                         capture_output=True, text=True, timeout=120)
+            if rr.returncode != 0 or not os.path.exists(fn):
+                errors.append("%s 第 %d 块：切不出来" % (role.get("label"), i + 1))
+                continue
+            secs.append({"name": "%s-%d" % (role.get("label", "角色"), i + 1),
+                         "path": fn, "pos_sec": a})
+        if not secs:
+            errors.append(f"{role.get('label')}：一块都没切出来")
+            continue
+        tmp = os.path.join(d, "按角色", "_live_sections.json")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(secs, f, ensure_ascii=False)
+        try:
+            r = _sp.run([_sys.executable, PUSH_LIVE, "--audio", secs[0]["path"],
+                         "--track", role.get("label", "角色"),
+                         "--sections-json", tmp, "--no-tempo", "--json"],
+                        capture_output=True, text=True, timeout=600)
+        except _sp.TimeoutExpired:
+            errors.append(f"{role.get('label')}：Live 没回话（它开着吗？控制面选了吗？）")
+            continue
+        if r.returncode == 0:
+            try:
+                res = json.loads(r.stdout)
+                n = len((res.get("result") or {}).get("clips") or [])
+            except Exception:  # noqa: BLE001
+                n = len(secs)
+            done.append({"label": role.get("label"), "clips": n})
+        else:
+            errors.append(f"{role.get('label')}：" + ((r.stderr or r.stdout or "")[-150:]))
+
+    return {"ok": True, "roles": done, "errors": errors,
+            "summary": "、".join(f"{x['label']} {x['clips']} 块" for x in done)}
+
 
 
 # ================= 批量导入现成录音（学生发来的手机音频） =================
