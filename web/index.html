@@ -238,6 +238,17 @@
   <div style="display:flex;justify-content:space-between;align-items:flex-start">
     <div><h1>VoiceCaster</h1><div class="sub">AI 有声作坊</div></div>
     <div style="position:relative;margin-top:8px;display:flex;gap:8px;align-items:flex-start">
+      <select id="globalEngine" onchange="setGlobalEngine(this.value)"
+              title="全局引擎：选一个，所有角色都改用它；「跟随角色卡」则各角色按自己的设置。方言仍然自动交给大户（Vox）"
+              style="font:14px inherit;padding:7px 9px;border-radius:9px;border:1px solid var(--line);
+                     background:rgba(255,255,255,.07);color:var(--ink)">
+        <option value="follow">全部用：跟随角色卡</option>
+        <option value="qwen">全部用：小户 · 奋斗青年（千问）</option>
+        <option value="omnivoice">全部用：中户 · 留学生（小米）</option>
+        <option value="voxcpm">全部用：大户 · 方言地头蛇（Vox）</option>
+      </select>
+      <span id="memHint" title="同时最多两个重引擎；大户闲置 10 分钟自动卸载"
+            style="font-size:12.5px;color:#8a8a94;line-height:1.5;max-width:200px"></span>
       <button onclick="toggleFM(event)">文件 ▾</button>
       <button id="resumeBtn" onclick="resumePpt(true)"
               style="background:rgba(255,154,60,.10);border-color:rgba(255,154,60,.35);color:#c9a486;opacity:.72"
@@ -1320,7 +1331,7 @@ async function cloneSave(){
   if(!CLONE.ref) return null;
   const name = document.getElementById('cloneName').value || '我的声音';
   const res = await fetch('/api/clone/save',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({ref:CLONE.ref, name, engine:CLONE.engine || 'voxcpm'})});
+    body:JSON.stringify({ref:CLONE.ref, name, engine:CLONE.engine || 'qwen'})});
   const d = await res.json();
   if(!res.ok){ alert(d.error || '存不了'); return null; }
   document.getElementById('cloneMsg').textContent =
@@ -1329,13 +1340,14 @@ async function cloneSave(){
   return d.card;
 }
 
-/* 切换这个声音用谁念（2026-10-30：抓来的怪声音默认用大户） */
+/* 切换这个声音用谁念（2026-11-04：拟人化叫法——小户/中户/大户/戏骨） */
 async function setEngine(cid, eng){
   const r = await fetch(`/api/characters/${cid}/engine`,{method:'POST',
     headers:{'Content-Type':'application/json'}, body:JSON.stringify({engine:eng})});
   const d = await r.json();
   if(!r.ok){ alert(d.error || '改不了'); return; }
-  const name = eng==='indextts' ? '大户' : (eng==='qwen' ? '千问' : '本机');
+  const name = eng==='indextts' ? '戏骨' : (eng==='qwen' ? '小户·奋斗青年'
+    : (eng==='omnivoice' ? '中户·留学生' : '大户·方言地头蛇'));
   document.getElementById('cloneMsg').textContent =
     cid + ' 号以后用「' + name + '」念' +
     (eng==='indextts' ? '（第一次点念一句会现叫醒它，约两分钟）' :
@@ -2036,7 +2048,7 @@ async function cutSegment(){
 async function useSegment(){
   if(!SEGREF) return;
   CLONE.ref = SEGREF;
-  CLONE.engine = 'indextts';            // 网页抓来的怪声音，默认交给大户（短素材更像）
+  CLONE.engine = 'indextts';            // 网页抓来的怪声音，默认交给戏骨（短素材更像）
   document.getElementById('cloneBox').classList.remove('hidden');
   const a = document.getElementById('cloneAudio');
   a.src = '/api/audio/output/clone/' + SEGREF + '?t=' + Date.now();
@@ -2879,12 +2891,13 @@ async function loadChars(){
           <option value="很累地说，声音没力气">疲惫</option>
         </select>
         <select id="eng_${c.id}" onchange="setEngine(${c.id}, this.value)"
-                title="用谁念这个声音：本机稳；千问会演戏、体积小；大户对短素材更像，但要现叫醒（约两分钟）"
+                title="用谁念这个声音：小户（千问）主力、快；中户（小米）多语种；大户（Vox）方言；戏骨（IndexTTS）更像，但要现叫醒（约两分钟）"
                 style="font:13px inherit;padding:5px 7px;border-radius:8px;border:1px solid var(--line);
                        background:rgba(255,255,255,.07);color:var(--ink)">
-          <option value="voxcpm"${(c.engine||'voxcpm')==='voxcpm'?' selected':''}>引擎：本机</option>
-          <option value="qwen"${c.engine==='qwen'?' selected':''}>引擎：千问</option>
-          <option value="indextts"${c.engine==='indextts'?' selected':''}>引擎：大户</option>
+          <option value="qwen"${(c.engine||'qwen')==='qwen'?' selected':''}>小户 · 奋斗青年（千问）</option>
+          <option value="omnivoice"${c.engine==='omnivoice'?' selected':''}>中户 · 留学生（小米）</option>
+          <option value="voxcpm"${c.engine==='voxcpm'?' selected':''}>大户 · 方言地头蛇（Vox）</option>
+          <option value="indextts"${c.engine==='indextts'?' selected':''}>戏骨（IndexTTS）</option>
         </select>
         <button onclick="sayChar(${c.id}, this)" title="用这个引擎念一句试试">念一句</button>
         <button onclick="renameChar(${c.id})" title="改名字；改完自动存，不用再点保存">重命名</button>
@@ -3641,7 +3654,7 @@ async function exportDocx(){
 }
 
 /* ---------- 用我自己的声音（克隆） ---------- */
-let CLONE = {ref:null, engine:'voxcpm'};
+let CLONE = {ref:null, engine:'qwen'};
 let REC = {mr:null, chunks:[], t0:0, timer:null};
 
 async function uploadBlob(blob, filename, opts){
@@ -3669,7 +3682,7 @@ async function uploadBlob(blob, filename, opts){
   busyDone();
   CLONE.ref = d.ref;
   CLONE.url = d.url;
-  if(!(opts && opts.quiet)) CLONE.engine = 'voxcpm';   // 自己录的/选的，默认走本机
+  if(!(opts && opts.quiet)) CLONE.engine = 'qwen';   // 自己录的/选的，默认走千问
   msg.textContent = '收到 ' + d.seconds + ' 秒' + (d.hint ? '：' + d.hint : '');
   if(opts && opts.quiet) return d;      // 录音这条路：不自动播放、不挂播放器
   document.getElementById('cloneBox').classList.remove('hidden');
@@ -3908,6 +3921,41 @@ if(location.search.includes('demo')){
 小奥：……那张图，我最开始……就想说，参数、好像不是96。`;
   doParse().then(()=>{ VOICES[5]='哭腔，抽泣，声音碎'; renderLines(); });
 }
+
+/* ---------- 全局引擎下拉（2026-11-04 用户要的：一次换掉所有角色） ---------- */
+async function loadGlobalEngine(){
+  try{
+    const r = await fetch('/api/settings/engine');
+    const d = await r.json();
+    const el = document.getElementById('globalEngine');
+    if(el) el.value = d.engine || 'follow';
+  }catch(e){}
+}
+async function setGlobalEngine(v){
+  try{
+    const r = await fetch('/api/settings/engine',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({engine:v})});
+    const d = await r.json();
+    const el = document.getElementById('globalEngine');
+    if(el) el.value = d.engine || 'follow';
+  }catch(e){}
+}
+loadGlobalEngine();
+
+/* ---------- 内存保底那行小字（2026-11-04） ---------- */
+async function refreshMem(){
+  try{
+    const d = await (await fetch('/api/engines/state')).json();
+    const el = document.getElementById('memHint'); if(!el) return;
+    const names = {qwen:'小户', voxcpm:'大户', indextts:'戏骨', omnivoice:'中户'};
+    const who = Object.keys(d.resident || {}).map(k => names[k] || k).join(' + ');
+    el.textContent = '内存：' + (who || '空') + ' / 最多 ' + d.cap +
+                     ' 个 · 可用 ' + d.avail_gb + 'G';
+    el.style.color = d.avail_gb < d.floor_gb ? '#ff9a8a' : '#8a8a94';
+  }catch(e){}
+}
+refreshMem();
+setInterval(refreshMem, 30000);
 
 </script>
 </body>

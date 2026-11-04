@@ -3,7 +3,7 @@
 - 角色：列表 / 试听 / 删除
 - 剧本：解析 → 台词表（每句可单独写声音）→ 排演（异步，轮询进度）→ 整段试听
 """
-import os, json, glob, time, uuid, threading, random, re
+import os, json, glob, time, uuid, threading, random, re, subprocess, gc
 # demucs 的权重缓存放工作区（模型 shell 写不了 ~/.cache/torch）
 os.environ.setdefault("TORCH_HOME", os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                  "..", "voxcpm-tentacle", ".torch"))
@@ -28,14 +28,133 @@ WEB = os.path.join(BASE, "web")
 os.makedirs(CHARS, exist_ok=True)
 os.makedirs(OUTDIR, exist_ok=True)
 
-print("loading model...", flush=True)
-MODEL = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False, device="mps", optimize=False)
-SR = MODEL.tts_model.sample_rate
-print("model ready", flush=True)
+SR = 48000            # VoxCPM2 的输出采样率（模型懒加载，所以写成常量）
 
 TASKS = {}
-LOCK = threading.Lock()
+LOCK = threading.RLock()      # RLock：_vox() 会在已持锁的路径里再取一次
 PRE_ROLL = 1.0   # 分句文件前面的静音（秒）
+
+# ── 大户（Vox）懒加载（2026-11-04 用户要的「内存保底」之一）──
+#    它一装就是 12G 常驻，而现在主力是小户/中户，只有方言和捏嗓子用它。
+_VOX = None
+_VOX_LAST = 0.0
+VOX_IDLE_SEC = int(os.environ.get("VC_VOX_IDLE", "600"))   # 闲置多久卸大户（测试可调小）
+
+# ── 内存保底：最多同时两个「重」引擎（2026-11-04 用户要的）──
+#    重 = 一次要吃 5G 以上。中户（小米）常驻只占 0.6G、生成时 4G，不算重。
+#    ⚠️ 小户和中户是 launchd 常驻（KeepAlive），杀了会自己回来，所以**卸不掉**；
+#       真能卸的只有大户（本进程）和戏骨（子进程）。满了先卸最久没用的。
+MEM_CAP = 2
+MEM_FLOOR_GB = 8.0            # 不管怎样给系统留这么多可用
+ENGINE_GB = {"qwen": 6.1, "voxcpm": 12.0, "indextts": 24.0}
+RESIDENT = {}                 # 引擎名 -> 最后使用时间
+_RES_LOCK = threading.Lock()
+
+
+def _mem_avail_gb():
+    """macOS 的「可用内存」＝ free + inactive + speculative（活动监视器同口径）。"""
+    try:
+        out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=3).stdout
+        page = 16384
+        vals = {}
+        for line in out.splitlines():
+            if "page size of" in line:
+                page = int(line.split("page size of")[1].split()[0])
+            elif ":" in line:
+                k, v = line.split(":", 1)
+                vals[k.strip()] = int(v.strip().rstrip(".") or 0)
+        return (vals.get("Pages free", 0) + vals.get("Pages inactive", 0)
+                + vals.get("Pages speculative", 0)) * page / 2 ** 30
+    except Exception:
+        return 0.0
+
+
+def _vox_unload():
+    global _VOX
+    if _VOX is None:
+        return
+    with _RES_LOCK:
+        _VOX = None
+        RESIDENT.pop("voxcpm", None)
+    gc.collect()
+    try:
+        torch.mps.empty_cache()
+    except Exception:
+        pass
+    print("大户已卸载（腾出约 12G）", flush=True)
+
+
+def _unload_engine(name):
+    """能真卸的才卸；小户/中户是 launchd 常驻，杀了会自己回来，不算。"""
+    if name == "voxcpm":
+        _vox_unload()
+        return True
+    if name == "indextts":
+        try:
+            api_theater_stop()
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def _sync_resident():
+    """小户在跑就记一笔（它是常驻，占名额但不参与淘汰）。"""
+    try:
+        if "qwen" not in RESIDENT and _qwen_ready():
+            RESIDENT["qwen"] = time.time()
+    except Exception:
+        pass
+
+
+def _admit(name):
+    """要用 name 之前过这一关。返回 True = 可以加载。"""
+    with _RES_LOCK:
+        _sync_resident()
+        RESIDENT[name] = time.time()
+        if len(RESIDENT) > MEM_CAP:
+            for _t, k in sorted((t, k) for k, t in RESIDENT.items() if k != name):
+                if _unload_engine(k):
+                    RESIDENT.pop(k, None)
+                    if len(RESIDENT) <= MEM_CAP:
+                        break
+        need = ENGINE_GB.get(name, 0.0)
+        if need and _mem_avail_gb() - need < MEM_FLOOR_GB:
+            print(f"内存不够：要 {need:.0f}G，可用 {_mem_avail_gb():.1f}G，保底 {MEM_FLOOR_GB:.0f}G",
+                  flush=True)
+            return False
+        return True
+
+
+def _vox():
+    """第一次用到才装 Vox（约 14 秒、12G）。闲置由 _vox_reaper 卸。"""
+    global _VOX, _VOX_LAST
+    if _VOX is None:
+        if not _admit("voxcpm"):
+            raise RuntimeError("内存不够，装不下大户：先关掉戏骨，或等别的活干完")
+        print("loading Vox...", flush=True)
+        _VOX = VoxCPM.from_pretrained("openbmb/VoxCPM2", load_denoiser=False,
+                                      device="mps", optimize=False)
+        print("Vox ready", flush=True)
+    _VOX_LAST = time.time()
+    return _VOX
+
+
+def _vox_reaper():
+    """闲置超过 VOX_IDLE_SEC 就把大户卸掉。"""
+    while True:
+        time.sleep(int(os.environ.get("VC_REAP_EVERY", "60")))
+        try:
+            if _VOX is not None and time.time() - _VOX_LAST > VOX_IDLE_SEC:
+                with LOCK:
+                    if _VOX is not None and time.time() - _VOX_LAST > VOX_IDLE_SEC:
+                        _vox_unload()
+        except Exception:
+            pass
+
+
+threading.Thread(target=_vox_reaper, daemon=True).start()
+print("Vox 懒加载：第一次用到才装（约 14 秒、12G；闲置 10 分钟自动卸）", flush=True)
 
 QWEN = "http://127.0.0.1:3910"
 
@@ -76,6 +195,62 @@ def _qwen_wav(text, ref=None, ref_text=None, voice=None, instruct=None,
     return np.asarray(wav, dtype="float32")
 
 
+OMNI = "http://127.0.0.1:3900"
+
+
+def _omni_ready():
+    try:
+        with _urlreq.urlopen(OMNI + "/health", timeout=3) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _omni_wav(text, ref, ref_text="", instruct=None, lang="Chinese", speed=1.0):
+    """调小米 OmniVoice（VoiceStudio 后端 3900）。
+
+    ★ 2026-11-04 用户定的分工：讲课交给小米。
+    直接把角色卡的定妆音频当参考音传过去，不用先在那边建档。
+    OmniVoice 出 24k，统一重采样到本工程的 SR（48k）。
+    """
+    boundary = "----vc" + uuid.uuid4().hex
+    body = io.BytesIO()
+
+    def _part(name, value):
+        body.write(f"--{boundary}\r\n".encode())
+        body.write(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+        body.write(str(value).encode("utf-8"))
+        body.write(b"\r\n")
+
+    _part("text", text)
+    _part("language", lang)
+    _part("speed", speed)
+    _part("num_step", 16)
+    if ref_text:
+        _part("ref_text", ref_text)
+    if instruct:
+        _part("instruct", instruct)
+    with open(ref, "rb") as fh:
+        raw = fh.read()
+    body.write(f"--{boundary}\r\n".encode())
+    body.write(b'Content-Disposition: form-data; name="ref_audio"; filename="ref.wav"\r\n')
+    body.write(b"Content-Type: audio/wav\r\n\r\n")
+    body.write(raw)
+    body.write(b"\r\n")
+    body.write(f"--{boundary}--\r\n".encode())
+    req = _urlreq.Request(OMNI + "/generate", data=body.getvalue(),
+                          headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    with _urlreq.urlopen(req, timeout=1800) as r:
+        data = r.read()
+    wav, sr = sf.read(io.BytesIO(data), dtype="float32")
+    if wav.ndim > 1:
+        wav = wav.mean(axis=1)
+    if sr != SR:
+        import librosa
+        wav = librosa.resample(np.asarray(wav, dtype="float32"), orig_sr=sr, target_sr=SR)
+    return np.asarray(wav, dtype="float32")
+
+
 _ASR = None
 
 
@@ -96,16 +271,73 @@ def _save_card(card):
         json.dump(card, f, ensure_ascii=False, indent=2)
 
 
-def _render_line(card, ref, text, ctrl, emotion="", man="", extra="", steps=16):
-    """按角色卡分发：voxcpm（原逻辑）/ qwen（官方音色或克隆）。
+# ── 全局引擎（2026-11-04 用户要的：页面顶上一个下拉，一次换掉所有角色）──
+GLOBAL_CFG = os.path.join(BASE, "webcfg.json")
+_GLOBAL_ENGINES = ("qwen", "omnivoice", "voxcpm")
 
-    2026-11-01：声音上配了方言（声库可改）就自动带上，剧本 / PPT / 朗读都吃这一条。
+
+def _global_engine():
+    """空串 / "follow" = 跟随角色卡；否则是强制的引擎名。"""
+    try:
+        with open(GLOBAL_CFG, encoding="utf-8") as f:
+            return (json.load(f).get("engine") or "").strip()
+    except Exception:
+        return ""
+
+
+_CJK = re.compile(r"[\u4e00-\u9fff]")
+_LATIN = re.compile(r"[A-Za-z\u00c0-\u024f]")
+
+
+def _looks_foreign(text):
+    """是不是外文稿：汉字很少、拉丁字母很多。中文里夹几个英文词不算。"""
+    t = text or ""
+    cjk = len(_CJK.findall(t))
+    lat = len(_LATIN.findall(t))
+    return lat > 8 and cjk * 4 < lat
+
+
+def _engine_for(card):
+    """这个角色这一句到底用谁念：全局强制优先，其次角色卡，最后千问。"""
+    g = _global_engine()
+    if g in _GLOBAL_ENGINES:
+        return g
+    return (card.get("engine") or "qwen") if card else "qwen"
+
+
+def _render_line(card, ref, text, ctrl, emotion="", man="", extra="", steps=16, mode="perform"):
+    """按角色卡分发。
+
+    ★ 2026-11-04 定的分工（当晚按用户的「不是千问最快吗」改过一版）：
+      演戏、朗读、讲课 → 千问为主（卡上 engine 缺省就是 qwen）
+      要小米：把那张角色卡的引擎改成「小米」，或调用方传 mode="lecture"（留给外文讲课）
+      方言（演戏和朗读里的）→ 一律 Vox，这是它唯一还被指着用的地方
     """
     dia = (card.get("dialect") or "").strip()
     if dia:
         ctrl = (ctrl + "，用" + dia + "说") if ctrl else ("用" + dia + "说")
-    if (card.get("engine") or "voxcpm") == "qwen":
-        perform = "，".join([x for x in (emotion, man, extra, (("用" + dia + "说") if dia else "")) if x])
+        with LOCK:
+            return _vox().generate(text=f"({ctrl}){text}", reference_wav_path=ref,
+                                  cfg_value=2.2, inference_timesteps=steps)
+
+    eng = _engine_for(card)          # 全局下拉 > 角色卡 > 千问
+    if eng == "voxcpm" and not ref:
+        eng = "qwen"                 # 官方音色没有参考音，Vox 念不了
+    if mode == "lecture":
+        # ★ 2026-11-04 最终版：小米只接外文稿；中文讲课走千问，小米平时闲着
+        eng = "omnivoice" if (ref and _looks_foreign(text)) else "qwen"
+
+    if eng == "omnivoice" and ref:
+        if _omni_ready():
+            try:
+                return _omni_wav(text, ref, card.get("ref_text") or "",
+                                 instruct=emotion or None)
+            except Exception:
+                pass          # 小米抽风就退回千问，别让一整页讲课卡死
+        eng = "qwen"
+
+    if eng == "qwen":
+        perform = "，".join([x for x in (emotion, man, extra) if x])
         if (card.get("kind") or "clone") == "official" and card.get("voice"):
             return _qwen_wav(text, voice=card["voice"], instruct=perform or None)
         if not card.get("ref_text"):
@@ -120,7 +352,7 @@ def _render_line(card, ref, text, ctrl, emotion="", man="", extra="", steps=16):
         return _qwen_wav(text, ref=ref, ref_text=card.get("ref_text") or "",
                          instruct=perform or None)
     with LOCK:
-        return MODEL.generate(text=f"({ctrl}){text}", reference_wav_path=ref,
+        return _vox().generate(text=f"({ctrl}){text}", reference_wav_path=ref,
                               cfg_value=2.2, inference_timesteps=steps)
 app = FastAPI()
 
@@ -284,7 +516,7 @@ def api_export_docx(inp: DocxOut):
 @app.get("/api/characters")
 def api_characters():
     return [{"id": c["id"], "name": c.get("name", ""), "desc": c.get("desc", ""),
-             "engine": c.get("engine") or "voxcpm",
+             "engine": c.get("engine") or "qwen",
              "kind": c.get("kind") or "clone",
              "voice": c.get("voice") or "",
              "audio": f"/api/audio/characters/{c['ref']}" if c.get("ref") else ""} for c in cards()]
@@ -310,22 +542,28 @@ def api_char_say(cid: int, inp: SayIn):
     text = (inp.text or "").strip() or "晚风掠过林间，我听见远处传来一声温柔的呼唤。"
 
     # ★ 2026-10-31 用户定：千问（qwen-tts 1.7B，3910）也可以念，先查在不在
-    if (card.get("engine") or "voxcpm") == "qwen":
-        if not _qwen_ready():
+    # ★ 2026-11-04：千问是演戏/朗读主力；小米（3900）也走同一条分发
+    gen = _engine_for(card)          # 全局下拉 > 角色卡 > 千问
+    if gen in ("qwen", "omnivoice"):
+        if gen == "qwen" and not _qwen_ready():
             return JSONResponse({"error": "千问服务没起来（3910）；先拉 qwen-tts 服务"}, status_code=503)
+        if gen == "omnivoice" and not _omni_ready():
+            return JSONResponse({"error": "小米服务没起来（3900）；先拉 VoiceStudio 后端"}, status_code=503)
         try:
             wav = _render_line(card, ref, text, card.get("desc", ""), emotion=inp.emotion)
         except Exception as e:
-            return JSONResponse({"error": f"千问出错：{e}"}, status_code=503)
-        out = os.path.join(OUTDIR, f"试念_{cid}号_千问.wav")
+            tag = "千问" if gen == "qwen" else "小米"
+            return JSONResponse({"error": f"{tag}出错：{e}"}, status_code=503)
+        tag = "千问" if gen == "qwen" else "小米"
+        out = os.path.join(OUTDIR, f"试念_{cid}号_{tag}.wav")
         sf.write(out, wav, SR)
-        return {"ok": True, "engine": "qwen",
+        return {"ok": True, "engine": gen,
                 "url": "/api/audio/output/" + os.path.basename(out),
                 "text": text, "seconds": round(len(wav) / SR, 2)}
 
     # ★ 2026-10-30 用户定：每个声音带「用谁念」的标记。
-    #   大户（IndexTTS）对短素材更抓得住口气，但从网页抓来的怪声音也常只有几秒。
-    if (card.get("engine") or "voxcpm") == "indextts":
+    #   戏骨（IndexTTS）对短素材更抓得住口气，但从网页抓来的怪声音也常只有几秒。
+    if gen == "indextts":
         if not _theater_ready():
             try:
                 api_theater_start()          # 现把它叫醒（要两分钟左右）
@@ -336,7 +574,7 @@ def api_char_say(cid: int, inp: SayIn):
                 if _theater_ready():
                     break
             else:
-                return JSONResponse({"error": "大户（IndexTTS）还没热好，一般要两分钟；等它好了再点一次"},
+                return JSONResponse({"error": "戏骨（IndexTTS）还没热好，一般要两分钟；等它好了再点一次"},
                                     status_code=503)
         body = json.dumps({"text": text, "ref": ref, "lang": "zh",
                            "emotion": "", "emotion_text": "", "emotion_ref": inp.emotion or "",
@@ -347,17 +585,30 @@ def api_char_say(cid: int, inp: SayIn):
             with _urlreq.urlopen(req, timeout=900) as r:
                 d = json.loads(r.read())
         except Exception as e:
-            return JSONResponse({"error": f"大户出错：{e}"}, status_code=503)
+            return JSONResponse({"error": f"戏骨出错：{e}"}, status_code=503)
         fn = d.get("file", "")
         return {"ok": True, "engine": "indextts",
                 "url": "/api/audio/output/theater/" + fn,
                 "text": text, "seconds": d.get("seconds", 0)}
 
+    # 走到这里 = Vox。官方音色没参考音，退给千问（全局下拉强制 Vox 时也会碰到）
+    if not ref:
+        if not _qwen_ready():
+            return JSONResponse({"error": "这条声音没参考音，Vox 念不了；千问服务也没起来（3910）"},
+                                status_code=503)
+        wav = _qwen_wav(text, voice=card.get("voice") or "vivian",
+                        instruct=card.get("desc") or None)
+        out = os.path.join(OUTDIR, f"试念_{cid}号_千问.wav")
+        sf.write(out, wav, SR)
+        return {"ok": True, "engine": "qwen",
+                "url": "/api/audio/output/" + os.path.basename(out),
+                "text": text, "seconds": round(len(wav) / SR, 2)}
+
     ctrl = card.get("desc", "") or "自然说话"
     if inp.emotion:
         ctrl += "，" + inp.emotion
     with LOCK:
-        wav = MODEL.generate(text=f"({ctrl}){text}", reference_wav_path=ref,
+        wav = _vox().generate(text=f"({ctrl}){text}", reference_wav_path=ref,
                              cfg_value=2.2, inference_timesteps=inp.steps)
     out = os.path.join(OUTDIR, f"试念_{cid}号.wav")
     sf.write(out, wav, SR)
@@ -366,21 +617,40 @@ def api_char_say(cid: int, inp: SayIn):
 
 
 class EngineIn(BaseModel):
-    engine: str = "voxcpm"
+    engine: str = "qwen"
 
 
 @app.post("/api/characters/{cid}/engine")
 def api_char_engine(cid: int, inp: EngineIn):
-    """改这个声音用谁念：voxcpm（本机主模型，稳）/ indextts（大户，短素材更像）。"""
+    """改这个声音用谁念：qwen（小户）/ omnivoice（中户）/ voxcpm（大户）/ indextts（戏骨）。"""
     p = os.path.join(CHARS, f"{cid}.json")
     if not os.path.exists(p):
         return JSONResponse({"error": "没有这个角色"}, status_code=404)
     with open(p, encoding="utf-8") as f:
         card = json.load(f)
-    card["engine"] = inp.engine if inp.engine in ("voxcpm", "indextts", "qwen") else "voxcpm"
+    card["engine"] = inp.engine if inp.engine in ("qwen", "omnivoice", "voxcpm", "indextts") else "qwen"
     with open(p, "w", encoding="utf-8") as f:
         json.dump(card, f, ensure_ascii=False, indent=2)
     return {"ok": True, "card": card}
+
+
+class EngineGlobalIn(BaseModel):
+    engine: str = "follow"
+
+
+@app.get("/api/settings/engine")
+def api_get_global_engine():
+    """页面顶上那个全局下拉的当前值。"""
+    return {"engine": _global_engine() or "follow"}
+
+
+@app.post("/api/settings/engine")
+def api_set_global_engine(inp: EngineGlobalIn):
+    """follow = 跟随角色卡；qwen / omnivoice / voxcpm = 全部强制用它。"""
+    e = inp.engine if inp.engine in ("follow",) + _GLOBAL_ENGINES else "follow"
+    with open(GLOBAL_CFG, "w", encoding="utf-8") as f:
+        json.dump({"engine": e}, f, ensure_ascii=False)
+    return {"ok": True, "engine": e}
 
 
 OFFICIAL_VOICES = [
@@ -446,7 +716,7 @@ def api_voice_library():
             "kind": "char", "id": c["id"],
             "name": c.get("name", ""), "desc": c.get("desc", ""),
             "kindc": c.get("kind") or "clone",
-            "engine": c.get("engine") or "voxcpm",
+            "engine": c.get("engine") or "qwen",
             "voice": c.get("voice") or "",
             "dialect": c.get("dialect", "") or "",
             "instruct": c.get("instruct", "") or "",
@@ -1009,7 +1279,8 @@ def _run_ppt(tid, inp):
                 wav = None
                 for _try in range(2):        # 一句崩了重试一次，别拖垮整册
                     try:
-                        wav = _render_line(c, ref, s, PPT_TONE, steps=inp.steps)
+                        # ★ 2026-11-04 用户定的最后一版：「一般人类情况，小米 solo」——讲课固定走中户（小米）
+                        wav = _render_line(c, ref, s, PPT_TONE, steps=inp.steps, mode="lecture")
                         break
                     except Exception as e:
                         t.update(msg=f"第 {i} 页有一句出错，重试：{e}")
@@ -1343,7 +1614,7 @@ def api_clone_preview(inp: ClonePreviewIn):
         # 这里再把方言名写进语气描述里推一把（普通话文本也能有点味儿）。
         tone = f"{CLONE_TONE}，用{inp.dialect}说"
     with LOCK:
-        wav = MODEL.generate(text=f"({tone}){text}", reference_wav_path=ref,
+        wav = _vox().generate(text=f"({tone}){text}", reference_wav_path=ref,
                              cfg_value=2.2, inference_timesteps=32)
     p = os.path.join(CLONEDIR, "preview.wav")
     sf.write(p, wav, SR)
@@ -1356,7 +1627,7 @@ class CloneSaveIn(BaseModel):
     name: str = "我的声音"
     desc: str = "我自己的声音"
     text: str = ""
-    engine: str = "voxcpm"      # voxcpm（本机主模型）/ indextts（大户，短素材更像）
+    engine: str = "qwen"        # qwen 小户 / omnivoice 中户 / voxcpm 大户 / indextts 戏骨
 
 
 @app.post("/api/clone/save")
@@ -1373,7 +1644,7 @@ def api_clone_save(inp: CloneSaveIn):
     _sh.copyfile(src, dst)
     card = {"id": n, "name": (inp.name or "我的声音").strip(), "desc": inp.desc,
             "ref": os.path.basename(dst), "text": inp.text,
-            "engine": (inp.engine or "voxcpm") if inp.engine in ("voxcpm", "indextts", "qwen") else "voxcpm",
+            "engine": inp.engine if inp.engine in ("qwen", "omnivoice", "voxcpm", "indextts") else "qwen",
             "kind": "clone",
             "created": time.strftime("%Y-%m-%d %H:%M")}
     with open(os.path.join(CHARS, f"{n}.json"), "w", encoding="utf-8") as f:
@@ -1680,7 +1951,7 @@ def api_design(inp: DesignIn):
     for k in range(3):
         torch.manual_seed((int(time.time() * 1000) + k * 7919) % (2 ** 31))
         with LOCK:
-            wav = MODEL.generate(text=f"({desc}){text}", cfg_value=2.2, inference_timesteps=16)
+            wav = _vox().generate(text=f"({desc}){text}", cfg_value=2.2, inference_timesteps=16)
         name = f"候选{k}.wav"
         sf.write(os.path.join(CLONEDIR, name), wav, SR)
         cands.append({"url": "/api/audio/output/clone/" + name,
@@ -2711,10 +2982,24 @@ def _read_render(seg, narr_voice, narr_tone=""):
         if ref:
             ctrl = tone + f"，用{dialect}说"
             with LOCK:
-                return MODEL.generate(text=f"({ctrl}){txt}", reference_wav_path=ref,
+                return _vox().generate(text=f"({ctrl}){txt}", reference_wav_path=ref,
                                       cfg_value=2.2, inference_timesteps=16)
     if card:
-        if (card.get("engine") or "voxcpm") == "qwen":
+        # ★ 2026-11-04 用户定：「一般人类情况，小米 solo」→ 朗读默认中户（小米）；
+        #   全局下拉强制时听全局；方言仍然在前面就交给大户（Vox）了
+        _g = _global_engine()
+        # ★ 小米只接外文稿；中文朗读走千问，它平时闲着
+        eng = _g if _g in _GLOBAL_ENGINES else ("omnivoice" if _looks_foreign(txt) else "qwen")
+        if eng == "omnivoice":
+            ref = _read_ref(card)
+            if ref and _omni_ready():
+                try:
+                    return _omni_wav(txt, ref, card.get("ref_text") or "",
+                                     instruct=instruct or base or None)
+                except Exception:
+                    pass
+            eng = "qwen"
+        if eng == "qwen":
             if (card.get("kind") or "clone") == "official" and card.get("voice"):
                 return _qwen_wav(txt, voice=card["voice"],
                                  instruct=instruct or base or None)
@@ -2732,7 +3017,7 @@ def _read_render(seg, narr_voice, narr_tone=""):
         ref = _read_ref(card)
         ctrl = instruct or base or (card.get("desc") or "") or NARR_TONE
         with LOCK:
-            return MODEL.generate(text=f"({ctrl}){txt}", reference_wav_path=ref,
+            return _vox().generate(text=f"({ctrl}){txt}", reference_wav_path=ref,
                                   cfg_value=2.2, inference_timesteps=16)
     # 2026-11-01：旁白下拉也能挑官方音色（值是 "o:vivian"），剥掉前缀再交给千问
     nv = (narr_voice or "").strip()
@@ -2810,6 +3095,16 @@ class DetectIn(BaseModel):
 def api_dialect_detect(inp: DetectIn):
     """朗读投递时用：每段认一下是不是方言，认出来就交给 Vox 念。"""
     return {"items": [_dial.detect(t, inp.min_hits) for t in inp.texts]}
+
+
+@app.get("/api/engines/state")
+def api_engines_state():
+    """给下拉旁边那行小字用：现在谁在内存里、还剩多少。"""
+    with _RES_LOCK:
+        res = {k: round(time.time() - v) for k, v in RESIDENT.items()}
+    return {"resident": res, "cap": MEM_CAP, "vox_loaded": _VOX is not None,
+            "avail_gb": round(_mem_avail_gb(), 1), "floor_gb": MEM_FLOOR_GB,
+            "vox_idle_sec": VOX_IDLE_SEC}
 
 
 app.mount("/", StaticFiles(directory=WEB, html=True), name="web")

@@ -34,6 +34,16 @@ if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:3910/health"; then
   fi
 fi
 
+# 小米 OmniVoice（:3900）：★ 2026-11-04 起的「讲课」主力。没起来就顺手拉一把。
+if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:3900/health"; then
+  VS="$HOME/Projects/VoiceStudio"
+  if [ -x "$VS/start-headless.sh" ]; then
+    ( cd "$VS" && nohup ./start-headless.sh > /tmp/omnivoice.log 2>&1 & )
+  else
+    echo "⚠️  没找到小米服务：$VS/start-headless.sh（讲课会退回千问）"
+  fi
+fi
+
 # 主服务（:7864）
 if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:7864/api/characters"; then
   nohup "$VENV/bin/python" server.py > /tmp/voicecaster-main.log 2>&1 &

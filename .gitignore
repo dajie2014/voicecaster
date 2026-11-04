@@ -9,3 +9,4 @@ VoiceCaster.app/
 *.flac
 *.m4a
 .DS_Store
+webcfg.json
